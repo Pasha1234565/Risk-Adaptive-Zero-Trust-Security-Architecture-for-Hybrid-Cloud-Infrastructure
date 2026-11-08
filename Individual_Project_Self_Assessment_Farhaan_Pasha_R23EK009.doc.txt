@@ -1,0 +1,319 @@
+================================================================================
+                    INDIVIDUAL PROJECT SELF-ASSESSMENT
+================================================================================
+
+1. BASIC PROJECT INFORMATION
+--------------------------------------------------------------------------------
+
+Project Title   : Risk-Adaptive Zero-Trust Security Architecture for Hybrid
+                  Cloud Infrastructure
+
+Your Name       : Farhaan Pasha
+Roll Number     : R23EK009
+
+Team Members    : Farhaan Pasha, Mayank Kaira, Shubham Kumar Pandey,
+                  Sudhanshu Bharadwaj, Syed Sulaiman
+
+Faculty Guide   : Mr. Hidam Rameshwar Singh
+
+Center          : Center for Emerging Computing Technologies
+
+Domain          : Cloud & Cybersecurity (Zero Trust · AI/ML · Hybrid Cloud)
+
+Project Type    : Research + Prototype (Design · Implementation · Evaluation)
+
+--------------------------------------------------------------------------------
+
+2. MY UNDERSTANDING OF THE PROBLEM
+--------------------------------------------------------------------------------
+
+What problem does the project address?
+  Hybrid cloud environments combine private and public cloud infrastructure to
+  gain scalability, flexibility, and cost efficiency. However, this mix creates
+  multiple trust boundaries: users, devices, applications, and resources may sit
+  across different networks and providers. Traditional perimeter-based security
+  models, which implicitly trust anything inside the network, cannot safely cover
+  such a distributed environment. The project addresses this gap by designing a
+  security architecture that does not assume internal users or devices are safe
+  by default.
+
+Why is this problem important?
+  As organizations increasingly adopt hybrid-cloud strategies, the attack surface
+  grows. A compromised credential, a misconfigured VM, or an unusual access
+  pattern inside what was "trusted" can lead to data exposure or lateral movement.
+  Static, rule-based access control is too rigid to catch these subtle risks and
+  too blunt to avoid disrupting legitimate work. A risk-adaptive, Zero-Trust
+  approach is important because it continuously evaluates each access request
+  against identity, device, behavioural, and resource context, then adapts its
+  response based on the current risk level.
+
+Who or what will benefit from the proposed solution?
+  - The organization operating the hybrid cloud, by reducing the chance of
+    unauthorized access, lateral movement, and data leakage.
+  - End users and administrators, by receiving access decisions that reflect the
+    real risk of a request rather than blanket restrictions.
+  - The research and academic community, through a working prototype and
+    quantitative evaluation (detection accuracy, false-positive/negative rates,
+    authentication overhead, and service latency).
+  - Team members, by gaining hands-on experience in cloud infrastructure,
+    identity and access management, anomaly detection, and security evaluation.
+
+What are the major challenges involved?
+  - Designing a hybrid cloud topology that is realistic yet safe and well
+    controlled for experimentation.
+  - Collecting enough behavioural data to establish reliable baselines for normal
+    access patterns.
+  - Choosing and tuning anomaly-detection techniques so they catch suspicious
+    behaviour without generating excessive false positives.
+  - Combining multiple contextual signals (identity, device, behaviour, resource,
+    request characteristics) into a risk score that maps cleanly to Allow,
+    Challenge, Restrict, or Block decisions.
+  - Balancing security responsiveness with service latency and authentication
+    overhead so the system remains usable.
+  - Conducting attack simulations ethically and only inside the authorized
+    project environment.
+
+--------------------------------------------------------------------------------
+
+3. MY UNDERSTANDING OF THE PROPOSED SOLUTION
+--------------------------------------------------------------------------------
+
+What do I think the proposed system will do?
+  The system will act as a Zero-Trust access-control layer for a hybrid cloud
+  environment. Every access request will be authenticated, then continuously
+  evaluated using multiple contextual signals. Based on a calculated risk score,
+  the system will decide to Allow (low risk), Challenge (medium risk), Restrict
+  (high risk), or Block (critical risk) the request. It will also monitor
+  behaviour over time, detect anomalies, and feed those anomaly scores back into
+  the risk engine.
+
+What are the major components or modules?
+  1. Hybrid cloud environment (private + public cloud resources, VMs/instances,
+     controlled communication layer, documented topology).
+  2. Identity and Zero-Trust access control (authentication, least-privilege
+     policies, per-resource access rules).
+  3. Behavioural data collection (logs of login time, access frequency, resource
+     usage, device/session context, normalized for analysis).
+  4. Behavioural anomaly detection (baseline profiles, trained model,
+     anomaly scoring).
+  5. Risk-adaptive access-control engine (integrates identity, device, anomaly
+     score, requested resource, request characteristics, and current security
+     context into a risk decision).
+  6. Security monitoring and attack simulation (centralized logging, controlled
+     suspicious scenarios, observation of system responses).
+  7. Performance and security evaluation (accuracy, false-positive/negative
+     rates, authentication overhead, latency, availability).
+
+How do I think these components will work together?
+  A user or device initiates an access request, which goes through authentication
+  first. After authentication, the system collects context about the request and
+  the session. That context is compared against behavioural baselines using the
+  anomaly-detection module, which produces an anomaly score. The risk engine
+  combines the identity/privilege information, device context, anomaly score,
+  requested resource, request characteristics, and current security context into
+  an overall risk level. The policy engine then issues an Allow / Challenge /
+  Restrict / Block decision. Meanwhile, centralized logging and monitoring record
+  normal and simulated attack scenarios so the team can observe and evaluate how
+  the system responds.
+
+What is my current understanding of the overall workflow?
+  User / Device → Authentication → Context Collection → Anomaly Detection →
+  Risk Score → Policy Engine → Access Decision
+
+In my own words, the workflow is: a request arrives, the system verifies who is
+making it and under what conditions, compares that request to learned normal
+behaviour, computes a risk level, and then chooses an adaptive response rather
+than a one-size-fits-all rule. The prototype will also be tested against
+controlled attack scenarios so the team can measure how well detection and access
+decisions perform under both normal and suspicious conditions.
+
+--------------------------------------------------------------------------------
+
+4. MY CURRENT TECHNICAL SKILLS
+--------------------------------------------------------------------------------
+
+Rating scale used:
+  1 – No Knowledge
+  2 – Basic
+  3 – Intermediate
+  4 – Good
+  5 – Advanced
+
+Cloud Computing and Virtualization                        : 3 (Intermediate)
+  I have a reasonable understanding of cloud and virtualization concepts and can
+  work with them with some guidance. Setting up and connecting private and public
+  cloud resources, configuring VMs/instances, and documenting network topology
+  are areas I can contribute to with support.
+
+Basic Cybersecurity Concepts                              : 3 (Intermediate)
+  I know foundational security concepts such as authentication, authorization,
+  least privilege, and the general idea of Zero Trust. I need to brush up on some
+  deeper cybersecurity concepts, especially around threat modelling and specific
+  cloud attack scenarios.
+
+Basic Python Programming                                  : 3 (Intermediate)
+  I am comfortable with basic Python and can use it for scripting, data handling,
+  and supporting prototype work, though I would still seek guidance for more
+  complex implementation tasks.
+
+Basic Machine Learning and Anomaly Detection              : 2 (Basic)
+  I have only basic exposure to machine learning and anomaly detection. I
+  understand the general idea of training a model on behavioural data and using it
+  to spot deviations, but I need to strengthen this area before contributing
+  meaningfully to the anomaly-detection module.
+
+Linux Administration and Command-Line Tools               : 3 (Intermediate)
+  I can use Linux and command-line tools with reasonable confidence for routine
+  setup, monitoring, and troubleshooting tasks.
+
+Git / GitHub                                              : 3 (Intermediate)
+  I am familiar with Git and GitHub workflows for version control and
+  collaboration, and can use them effectively in a team project.
+
+Overall, my strongest relevant areas at present are cloud/virtualization
+concepts, cybersecurity fundamentals, Python, Linux, and Git. My weakest relevant
+area is machine learning and anomaly detection, which I plan to improve.
+
+--------------------------------------------------------------------------------
+
+5. PREREQUISITES I NEED TO LEARN
+--------------------------------------------------------------------------------
+
+Technical concepts I need to learn:
+  - Deeper cybersecurity concepts, especially around Zero Trust architectures,
+    identity and access management, and cloud-specific threat scenarios.
+  - Risk scoring and how to combine multiple contextual signals into a coherent
+    risk decision.
+
+Programming languages or frameworks I need to improve:
+  - Python, particularly for data preprocessing, model experimentation, and
+    scripting parts of the prototype.
+
+Tools / platforms I need to learn:
+  - Practical cloud setup and administration for both private and public cloud
+    resources (VMs/instances, networking between environments, controlled
+    communication layers).
+  - Logging, monitoring, and evaluation tooling relevant to security analysis.
+
+Cloud or infrastructure concepts I need to understand:
+  - Hybrid cloud architecture in more depth: how private and public cloud
+    resources connect, how trust boundaries work, and how to document network
+    topology, IP addressing, services, and security boundaries.
+  - Virtualization and instance configuration for the prototype environment.
+
+AI / ML concepts, if applicable:
+  - Anomaly detection techniques suitable for behavioural access data.
+  - How to establish baseline behaviour profiles, train/test a model, generate
+    anomaly scores, and interpret evaluation metrics such as detection accuracy
+    and false-positive/false-negative rates.
+
+Other project-specific prerequisites:
+  - How to design realistic but controlled attack simulations within the
+    authorized environment.
+  - How to translate the risk levels (Low / Medium / High / Critical) into actual
+    policy decisions (Allow / Challenge / Restrict / Block) in a way that is both
+    secure and usable.
+
+--------------------------------------------------------------------------------
+
+6. MY EXPECTED CONTRIBUTION TO THE PROJECT
+--------------------------------------------------------------------------------
+
+Which module or area interests me most?
+  The computer-network side of the project interests me the most, especially
+  setting up the public and private cloud architecture. Designing and implementing
+  the hybrid cloud environment, configuring VMs/instances, establishing controlled
+  communication between cloud environments, and documenting the network topology,
+  IP addressing, services, and security boundaries are the parts I find most
+  engaging.
+
+Which tasks do I think I can contribute to?
+  - Helping design and set up the hybrid cloud environment in Phase 1.
+  - Assisting with configuration of private and public cloud resources and virtual
+    machines or cloud instances.
+  - Supporting documentation of network topology and security boundaries.
+  - Contributing to Linux and command-line tasks related to environment setup and
+    monitoring.
+  - Helping with general prototype implementation and team coordination where
+    Python, Git, and cloud setup skills are useful.
+
+What technical skills can I bring to the team?
+  - Intermediate familiarity with cloud computing, virtualization, cybersecurity
+    basics, Python, Linux, and Git/GitHub.
+  - A practical interest in building and connecting cloud infrastructure, which
+    aligns well with the hybrid environment setup work.
+
+What skills would I like to develop during the project?
+  - Stronger machine learning and anomaly-detection skills so I can contribute
+    more confidently to behavioural analysis.
+  - Deeper cybersecurity knowledge, especially around Zero Trust and cloud threat
+    scenarios.
+  - Better hands-on experience evaluating security and performance metrics such
+    as detection accuracy, false-positive rate, authentication overhead, and
+    service latency.
+
+--------------------------------------------------------------------------------
+
+7. MY CONFIDENCE LEVEL
+--------------------------------------------------------------------------------
+
+Selected rating: 3 – I have a basic understanding.
+
+I have chosen a confidence level of 3 because I understand the overall project
+goals and the general workflow quite well: a hybrid cloud environment with a
+Zero-Trust, risk-adaptive access-control layer, supported by behavioural anomaly
+detection and evaluated through controlled simulations. I am reasonably confident
+in the cloud, networking, Linux, Python, Git, and cybersecurity basics that are
+relevant to the project.
+
+At the same time, I do not yet feel confident enough to independently build the
+full anomaly-detection model or the risk-scoring engine. My machine learning and
+deeper cybersecurity knowledge need improvement, and some of the infrastructure
+work will likely require guidance. A rating of 3 reflects that I have a solid
+starting point and can contribute meaningfully, especially on the cloud and
+networking side, while still needing to learn and grow in other areas.
+
+--------------------------------------------------------------------------------
+
+8. MY LEARNING PLAN
+--------------------------------------------------------------------------------
+
+Topics to learn:
+  1. Zero Trust security principles and identity/access management in hybrid
+     environments.
+  2. Cloud infrastructure setup: private and public cloud resources, VMs/
+     instances, networking between environments, and security boundaries.
+  3. Machine learning basics for anomaly detection, including baseline behaviour
+     modelling and anomaly scoring.
+  4. Data preprocessing and normalization for behavioural access logs.
+  5. Evaluation metrics for threat detection: accuracy, false-positive rate,
+     false-negative rate, authentication overhead, and service latency.
+
+Learning resources I plan to use:
+  - The project description and any faculty-provided reference material as the
+    primary guide.
+  - Online tutorials and documentation on Zero Trust, hybrid cloud setup, and
+    anomaly detection.
+  - Python documentation and practical examples for data handling and prototyping.
+  - Linux and cloud platform documentation for environment setup and monitoring.
+
+Expected time required:
+  - A focused initial study period before the next project phase, with continued
+    learning during implementation. I expect the most concentrated effort to go
+    into cloud setup and the machine learning/anomaly-detection topics, since
+    those are the areas where I currently have the most to learn.
+
+How I will demonstrate my learning:
+  - By being able to explain the hybrid cloud architecture, Zero Trust workflow,
+    and anomaly-detection approach in my own words.
+  - By contributing to environment setup, configuration, and documentation tasks.
+  - By writing and discussing small Python scripts or prototype pieces related to
+    data handling or model experimentation.
+  - By taking part in team discussions and being able to ask informed questions
+    about the risk engine, anomaly scoring, and evaluation plan.
+
+--------------------------------------------------------------------------------
+
+Prepared by: Farhaan Pasha (R23EK009)
+Date        : 16 September 2026
+================================================================================
