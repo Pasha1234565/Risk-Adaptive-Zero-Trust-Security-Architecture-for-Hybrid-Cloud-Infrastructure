@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Administration{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Control plane</p>
+    <h1>Administration</h1>
+    <p class="lede">Inspect identities, devices, resources and least-privilege policies. Tune decision thresholds and retrain the behavioural model.</p>
+  </div>
+  <div class="head-actions">
+    <span class="status-chip ok"><span class="pulse"></span>Policy engine online</span>
+  </div>
+</div>
+
+<div class="tabs" role="tablist" aria-label="Administration sections">
+  <button class="tab active" data-tab="identity" role="tab">Identities &amp; devices</button>
+  <button class="tab" data-tab="resources" role="tab">Resources</button>
+  <button class="tab" data-tab="policies" role="tab">Policies</button>
+  <button class="tab" data-tab="model" role="tab">Model &amp; thresholds</button>
+</div>
+
+<section class="tab-panel active" id="tab-identity">
+  <div class="kpi-grid kpi-grid-4" id="admin-kpis">
+    <div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>Identities</h2><p>Users, roles and enrolled devices</p></div></div>
+    <div class="table-wrap">
+      <table class="table" id="users-table">
+        <thead><tr><th>Identity</th><th>Role</th><th>Department</th><th>Status</th><th>MFA</th><th>Devices</th></tr></thead>
+        <tbody><tr><td colspan="6" class="empty compact">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>Device inventory</h2><p>Posture signals used in the device risk factor</p></div></div>
+    <div class="table-wrap">
+      <table class="table" id="devices-table">
+        <thead><tr><th>Device</th><th>Owner</th><th>Type</th><th>OS</th><th>Managed</th><th>Compliant</th><th>Trust</th></tr></thead>
+        <tbody><tr><td colspan="7" class="empty compact">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="tab-panel" id="tab-resources">
+  <div class="card">
+    <div class="card-head"><div><h2>Resource inventory</h2><p>Private and public cloud workloads with sensitivity classification</p></div></div>
+    <div class="table-wrap">
+      <table class="table" id="resources-table">
+        <thead><tr><th>Resource</th><th>Zone</th><th>Service</th><th>Category</th><th>Sensitivity</th><th>Owner</th></tr></thead>
+        <tbody><tr><td colspan="6" class="empty compact">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="tab-panel" id="tab-policies">
+  <div class="card">
+    <div class="card-head">
+      <div><h2>Least-privilege policies</h2><p>Policies set minimum device trust, MFA and role allow-lists; violations escalate risk</p></div>
+      <span class="chip" id="policy-count">—</span>
+    </div>
+    <div class="table-wrap">
+      <table class="table" id="policies-table">
+        <thead><tr><th>Policy</th><th>Applies to</th><th>Min. trust</th><th>MFA</th><th>Allowed roles</th><th>Effect</th><th>Enabled</th></tr></thead>
+        <tbody><tr><td colspan="7" class="empty compact">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="grid grid-2 align-start">
+    <section class="card">
+      <div class="card-head"><div><h2>How policy escalation works</h2></div></div>
+      <ul class="detail-list">
+        <li><strong>Role violation</strong><span>+18 risk and a minimum Restrict decision.</span></li>
+        <li><strong>Missing MFA</strong><span>+20 risk and a minimum Challenge decision.</span></li>
+        <li><strong>Device below trust floor</strong><span>+15 risk and a minimum Challenge decision.</span></li>
+        <li><strong>Hard controls</strong><span>Suspended identity, malicious IP or device trust below 20 always blocks.</span></li>
+      </ul>
+    </section>
+    <section class="card">
+      <div class="card-head"><div><h2>Policy evaluation coverage</h2><p>Why policies and scoring must work together</p></div></div>
+      <p class="body-copy">Risk scoring alone cannot express an organisational prohibition. Least-privilege policies therefore act as a second, deterministic layer: they can raise the score, force a minimum outcome, and are recorded against every event for audit. Administrators can toggle a policy without a restart; the next request picks it up.</p>
+    </section>
+  </div>
+</section>
+
+<section class="tab-panel" id="tab-model">
+  <div class="grid grid-2 align-start">
+    <section class="card">
+      <div class="card-head"><div><h2>Behavioural model</h2><p>Current detector metadata</p></div></div>
+      <dl class="meta-grid" id="model-detail"></dl>
+      <div class="feature-chips" id="feature-chips"></div>
+      <form class="retrain-form" id="retrain-form">
+        <label class="field compact"><span>Baseline samples</span><input type="number" id="train-samples" value="1200" min="200" max="5000"></label>
+        <label class="field compact"><span>Contamination</span><input type="number" id="train-contamination" value="0.04" min="0.01" max="0.15" step="0.01"></label>
+        <button class="btn btn-primary" type="submit" id="retrain-btn">Retrain model</button>
+      </form>
+      <p class="field-hint">Retraining replaces the on-disk model and is picked up immediately by the decision engine.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><div><h2>Decision thresholds</h2><p>Risk bands mapped to adaptive outcomes</p></div></div>
+      <form id="threshold-form" class="threshold-form">
+        <div class="threshold-row">
+          <div class="threshold-label"><span class="badge decision-allow">Allow</span><small>Risk below</small></div>
+          <input type="range" id="allow-range" min="5" max="45" step="1" value="40">
+          <output id="allow-output">40</output>
+        </div>
+        <div class="threshold-row">
+          <div class="threshold-label"><span class="badge decision-challenge">Challenge</span><small>Risk below</small></div>
+          <input type="range" id="challenge-range" min="30" max="70" step="1" value="60">
+          <output id="challenge-output">60</output>
+        </div>
+        <div class="threshold-row">
+          <div class="threshold-label"><span class="badge decision-restrict">Restrict</span><small>Risk below</small></div>
+          <input type="range" id="restrict-range" min="55" max="95" step="1" value="80">
+          <output id="restrict-output">80</output>
+        </div>
+        <p class="field-hint">Risk at or above the restrict threshold is blocked. Thresholds must be strictly increasing.</p>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit" id="save-thresholds">Apply thresholds</button>
+        </div>
+      </form>
+      <div class="weight-list" id="weight-list"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="card-head"><div><h2>System inventory</h2><p>Record counts and deployment facts</p></div><span class="chip" id="admin-version">—</span></div>
+    <dl class="meta-grid wide" id="system-counts"></dl>
+  </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/admin.js" defer></script>
+{% endblock %}

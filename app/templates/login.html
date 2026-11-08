@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Zero Trust Hybrid Cloud</title>
+  <meta name="description" content="Risk-adaptive zero-trust security architecture for hybrid cloud infrastructure.">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="icon" href="/static/img/shield.svg" type="image/svg+xml">
+</head>
+<body class="login-body">
+<div class="login-shell">
+  <section class="login-visual">
+    <div class="login-brand">
+      <div class="brand-mark large">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.4 20 6v5.4c0 5-3.4 9.3-8 10.6-4.6-1.3-8-5.6-8-10.6V6l8-3.6Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m8.6 12 2.3 2.3 4.6-4.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <span>ZERO TRUST · HYBRID CLOUD</span>
+    </div>
+
+    <div class="login-copy">
+      <p class="eyebrow">Risk-adaptive access control</p>
+      <h1>Never trust.<br><em>Always verify.</em></h1>
+      <p>Continuous evaluation of identity, device posture, behavioural context and resource sensitivity across private and public cloud boundaries.</p>
+    </div>
+
+    <div class="login-flow" aria-label="Decision pipeline">
+      <div class="flow-step"><span>01</span>Identity</div>
+      <div class="flow-line"></div>
+      <div class="flow-step"><span>02</span>Context</div>
+      <div class="flow-line"></div>
+      <div class="flow-step"><span>03</span>Anomaly</div>
+      <div class="flow-line"></div>
+      <div class="flow-step"><span>04</span>Risk</div>
+      <div class="flow-line"></div>
+      <div class="flow-step accent"><span>05</span>Decision</div>
+    </div>
+
+    <div class="login-stats">
+      <div><strong>6</strong><span>context signals</span></div>
+      <div><strong>4</strong><span>adaptive outcomes</span></div>
+      <div><strong>12</strong><span>attack scenarios</span></div>
+    </div>
+
+    <div class="login-decisions">
+      <span class="decision-dot allow"></span><span>Allow</span>
+      <span class="decision-dot challenge"></span><span>Challenge</span>
+      <span class="decision-dot restrict"></span><span>Restrict</span>
+      <span class="decision-dot block"></span><span>Block</span>
+    </div>
+  </section>
+
+  <section class="login-panel">
+    <div class="login-card">
+      <div class="login-card-head">
+        <span class="env-pill"><span class="pulse"></span>{{ environment }}</span>
+        <h2>Security operations sign in</h2>
+        <p>Authenticate to the local decision engine and analytics console.</p>
+      </div>
+
+      <form id="login-form" class="login-form" autocomplete="on" novalidate>
+        <label class="field">
+          <span>Work email</span>
+          <input type="email" id="email" name="email" placeholder="analyst@hybridcloud.io" autocomplete="username" required>
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <div class="password-wrap">
+            <input type="password" id="password" name="password" placeholder="Enter your password" autocomplete="current-password" required>
+            <button type="button" class="reveal" id="reveal-btn" aria-label="Show password">Show</button>
+          </div>
+        </label>
+        <p class="form-error" id="login-error" hidden></p>
+        <button class="btn btn-primary btn-block" type="submit" id="login-btn">
+          <span>Authenticate</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+
+      <div class="demo-access">
+        <div class="demo-head"><span>Demo identities</span><small>Click to fill credentials</small></div>
+        <div class="demo-list">
+          {% for account in demo_accounts %}
+          <button type="button" class="demo-account" data-email="{{ account.email }}" data-password="{{ account.password }}">
+            <span class="demo-avatar">{{ account.name[0] }}</span>
+            <span class="demo-info">
+              <strong>{{ account.name }}</strong>
+              <small>{{ account.email }}</small>
+            </span>
+            <span class="role-tag">{{ account.role | replace('_', ' ') }}</span>
+          </button>
+          {% endfor %}
+        </div>
+        <p class="demo-note">The service account has MFA disabled by design; all other demo identities use TOTP step-up.</p>
+      </div>
+
+      <p class="login-foot">Local research prototype · v{{ version }} · No production data</p>
+    </div>
+  </section>
+</div>
+<script src="/static/js/login.js" defer></script>
+</body>
+</html>

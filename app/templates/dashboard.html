@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Trust overview{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Security operations · last 24 hours</p>
+    <h1>Trust overview</h1>
+    <p class="lede">Every access request across the private data centre and public cloud is evaluated continuously. No network location is implicitly trusted.</p>
+  </div>
+  <div class="head-actions">
+    <span class="updated" id="updated-at">Loading telemetry…</span>
+    <button class="btn btn-ghost" id="refresh-dashboard">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.1 9a7 7 0 0 1 11.6-2.4L20 9M4 15l2.3 2.4A7 7 0 0 0 17.9 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      Refresh
+    </button>
+  </div>
+</div>
+
+<div class="kpi-grid" id="kpi-grid">
+  <div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div>
+  <div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div>
+</div>
+
+<div class="grid grid-2-1">
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Risk distribution</h2><p>Requests evaluated in the last 24 hours by risk band</p></div>
+      <span class="chip">0 – 100 scale</span>
+    </div>
+    <div class="chart-box" id="risk-bars"></div>
+    <div class="chart-legend">
+      <span><i class="swatch allow"></i>Allow</span>
+      <span><i class="swatch challenge"></i>Challenge</span>
+      <span><i class="swatch restrict"></i>Restrict</span>
+      <span><i class="swatch block"></i>Block</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Decision outcomes</h2><p>Adaptive responses, last 24 hours</p></div>
+    </div>
+    <div class="donut-wrap" id="decision-donut"></div>
+    <div class="donut-legend" id="decision-legend"></div>
+  </section>
+</div>
+
+<div class="grid grid-2">
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Open alerts</h2><p>Restrict and block decisions requiring triage</p></div>
+      <a class="link" href="/monitoring">View all</a>
+    </div>
+    <div id="alert-list" class="alert-list"><div class="empty compact">Loading alerts…</div></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Behavioural model</h2><p>Anomaly detection status</p></div>
+      <span class="status-chip ok"><span class="pulse"></span>Online</span>
+    </div>
+    <dl class="meta-grid" id="model-meta"></dl>
+    <div class="model-foot">
+      <a class="link" href="/admin">Inspect model &amp; thresholds →</a>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <div><h2>Recent access decisions</h2><p>Latest evaluations across both trust zones</p></div>
+    <a class="link" href="/monitoring">Full event log</a>
+  </div>
+  <div class="table-wrap">
+    <table class="table" id="recent-table">
+      <thead>
+        <tr><th>Time</th><th>Identity</th><th>Resource</th><th>Device</th><th>Risk</th><th>Decision</th><th></th></tr>
+      </thead>
+      <tbody><tr><td colspan="7" class="empty compact">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card estate-card">
+  <div class="card-head">
+    <div><h2>Hybrid estate</h2><p>Private data centre and public cloud tenancy behind a shared policy plane</p></div>
+    <a class="link" href="/architecture">Architecture design</a>
+  </div>
+  <div class="estate" id="estate-map">
+    <div class="estate-zone private">
+      <div class="zone-head"><span class="zone-dot"></span>Private data centre<small>10.20.0.0/16</small></div>
+      <div class="node-row" id="private-nodes"></div>
+    </div>
+    <div class="estate-boundary">
+      <span class="boundary-label">Trust boundary</span>
+      <div class="boundary-node">PDP</div>
+      <div class="boundary-node">PEP</div>
+      <span class="boundary-link"></span>
+    </div>
+    <div class="estate-zone public">
+      <div class="zone-head"><span class="zone-dot"></span>Public cloud<small>10.60.0.0/16</small></div>
+      <div class="node-row" id="public-nodes"></div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/dashboard.js" defer></script>
+{% endblock %}

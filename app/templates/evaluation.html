@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Evaluation{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Phase 7 · quantitative results</p>
+    <h1>Detection &amp; performance evaluation</h1>
+    <p class="lede">Labelled normal and malicious traffic evaluated through the live decision engine, with measured decision latency, authentication overhead and protected-service latency.</p>
+  </div>
+  <div class="head-actions">
+    <span class="updated" id="eval-updated">Loading…</span>
+    <button class="btn btn-primary" id="run-evaluation">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9m7 10V5m7 14v-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      Run evaluation
+    </button>
+  </div>
+</div>
+
+<div class="kpi-grid" id="eval-kpis">
+  <div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div>
+  <div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div>
+</div>
+
+<div class="grid grid-2">
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Decision confusion matrix</h2><p>Positive = any response above Allow</p></div>
+      <span class="chip" id="eval-samples">—</span>
+    </div>
+    <div id="confusion-matrix" class="confusion-wrap"></div>
+    <dl class="mini-metrics" id="detection-extra"></dl>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Measured latency</h2><p>Local single-host measurements</p></div>
+      <span class="chip">milliseconds</span>
+    </div>
+    <div id="latency-chart" class="chart-box short"></div>
+    <div class="latency-list" id="latency-list"></div>
+  </section>
+</div>
+
+<div class="grid grid-2 align-start">
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Per-scenario detection</h2><p>Primary variant for each controlled attack pattern</p></div>
+    </div>
+    <div class="table-wrap">
+      <table class="table" id="scenario-eval-table">
+        <thead><tr><th>Scenario</th><th>Risk</th><th>Anomaly</th><th>Decision</th><th>Result</th></tr></thead>
+        <tbody><tr><td colspan="5" class="empty compact">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Model &amp; availability</h2><p>Operational characteristics of this run</p></div>
+    </div>
+    <dl class="meta-grid" id="eval-model-meta"></dl>
+    <div class="availability-box">
+      <div class="availability-head"><span>Engine availability</span><strong id="availability-value">—</strong></div>
+      <div class="progress"><span id="availability-bar"></span></div>
+      <p id="availability-detail" class="muted">—</p>
+    </div>
+    <div class="anomaly-strip" id="anomaly-metrics"></div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <div><h2>Evaluation history</h2><p>Stored runs with their headline metrics</p></div>
+    <button class="btn btn-ghost small" id="refresh-history">Refresh</button>
+  </div>
+  <div class="table-wrap">
+    <table class="table clickable" id="history-table">
+      <thead><tr><th>Run</th><th>Timestamp</th><th>Samples</th><th>Accuracy</th><th>FPR</th><th>FNR</th><th>Duration</th></tr></thead>
+      <tbody><tr><td colspan="7" class="empty compact">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card note-card">
+  <div class="note-icon">i</div>
+  <div>
+    <h3>How to read these results</h3>
+    <p><strong>Detection</strong> treats Challenge, Restrict and Block as a positive response; <strong>containment</strong> counts only Restrict and Block. False-positive rate is measured on legitimate sessions, false-negative rate on the labelled attack corpus. Anomaly detection is scored separately at the model threshold. Latency figures are real wall-clock measurements in this single process and are indicative rather than production SLAs. The normal corpus is synthetic and seeded for reproducibility.</p>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/evaluation.js" defer></script>
+{% endblock %}

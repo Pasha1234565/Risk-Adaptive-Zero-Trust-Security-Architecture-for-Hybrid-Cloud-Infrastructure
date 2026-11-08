@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Monitoring{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Continuous monitoring</p>
+    <h1>Security event log</h1>
+    <p class="lede">Every decision, its signal breakdown and the policies that shaped it. Restricted and blocked requests raise alerts for triage.</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn btn-ghost" id="export-csv">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Export CSV
+    </button>
+    <button class="btn btn-ghost" id="refresh-monitoring">Refresh</button>
+  </div>
+</div>
+
+<div class="kpi-grid kpi-grid-4" id="monitor-kpis">
+  <div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div><div class="kpi skeleton"></div>
+</div>
+
+<section class="card filter-card">
+  <div class="filters">
+    <label class="field compact">
+      <span>Decision</span>
+      <select id="filter-decision">
+        <option value="ALL">All outcomes</option>
+        <option value="ALLOW">Allow</option>
+        <option value="CHALLENGE">Challenge</option>
+        <option value="RESTRICT">Restrict</option>
+        <option value="BLOCK">Block</option>
+      </select>
+    </label>
+    <label class="field compact">
+      <span>Ground truth</span>
+      <select id="filter-truth">
+        <option value="all">All traffic</option>
+        <option value="normal">Normal sessions</option>
+        <option value="attack">Simulated attacks</option>
+      </select>
+    </label>
+    <label class="field compact">
+      <span>Scenario</span>
+      <select id="filter-scenario"><option value="all">All scenarios</option></select>
+    </label>
+    <label class="field compact">
+      <span>Identity</span>
+      <select id="filter-user"><option value="">All identities</option></select>
+    </label>
+    <button class="btn btn-ghost small" id="reset-filters">Clear filters</button>
+  </div>
+</section>
+
+<div class="grid grid-2-1 align-start">
+  <section class="card">
+    <div class="card-head">
+      <div><h2>Access decisions</h2><p id="event-count">Loading…</p></div>
+      <span class="status-chip ok"><span class="pulse"></span>Live</span>
+    </div>
+    <div class="table-wrap">
+      <table class="table clickable" id="events-table">
+        <thead>
+          <tr><th>Time</th><th>Identity</th><th>Resource</th><th>Zone</th><th>Risk</th><th>Anomaly</th><th>Decision</th></tr>
+        </thead>
+        <tbody><tr><td colspan="7" class="empty compact">Loading events…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="table-foot">
+      <span id="page-info">—</span>
+      <div class="pager">
+        <button class="btn btn-ghost small" id="prev-page">Previous</button>
+        <button class="btn btn-ghost small" id="next-page">Next</button>
+      </div>
+    </div>
+  </section>
+
+  <aside class="card alerts-card">
+    <div class="card-head">
+      <div><h2>Alert queue</h2><p>Elevated decisions requiring review</p></div>
+      <span class="count-badge" id="alert-count">0</span>
+    </div>
+    <div class="alert-list tall" id="alerts-panel"><div class="empty compact">Loading alerts…</div></div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/monitoring.js" defer></script>
+{% endblock %}

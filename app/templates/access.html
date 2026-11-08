@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Access console{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Policy decision point</p>
+    <h1>Access request console</h1>
+    <p class="lede">Compose a request with real identity, device and resource context, then observe the risk score, anomaly attribution and adaptive decision.</p>
+  </div>
+  <div class="head-actions">
+    <span class="chip subtle">Every request evaluated, never assumed</span>
+  </div>
+</div>
+
+<div class="access-layout">
+  <section class="card request-card">
+    <div class="card-head">
+      <div><h2>Request context</h2><p>Signals are combined by the risk engine</p></div>
+      <span class="chip">PDP</span>
+    </div>
+
+    <form id="access-form" novalidate>
+      <div class="form-section">
+        <h3><span>1</span>Identity &amp; target</h3>
+        <label class="field">
+          <span>Identity</span>
+          <select id="user-select"></select>
+        </label>
+        <p class="field-hint" id="user-hint"></p>
+        <label class="field">
+          <span>Device posture</span>
+          <select id="device-select"></select>
+        </label>
+        <p class="field-hint" id="device-hint"></p>
+        <label class="field">
+          <span>Requested resource</span>
+          <select id="resource-select"></select>
+        </label>
+        <p class="field-hint" id="resource-hint"></p>
+      </div>
+
+      <div class="form-section">
+        <h3><span>2</span>Session &amp; request context</h3>
+        <div class="field-grid">
+          <label class="field">
+            <span>Source location</span>
+            <select id="geo-select"></select>
+          </label>
+          <label class="field">
+            <span>Access hour</span>
+            <input type="number" id="hour-input" min="0" max="23" value="13">
+          </label>
+          <label class="field">
+            <span>Requests / 5 min</span>
+            <input type="number" id="rate-input" min="0" max="500" value="5">
+          </label>
+          <label class="field">
+            <span>Failed logins (24h)</span>
+            <input type="number" id="failed-input" min="0" max="100" value="0">
+          </label>
+          <label class="field">
+            <span>Egress volume (MB)</span>
+            <input type="number" id="bytes-input" min="0" max="5000" value="18">
+          </label>
+          <label class="field">
+            <span>Session duration (min)</span>
+            <input type="number" id="session-input" min="0" max="1440" value="25">
+          </label>
+          <label class="field">
+            <span>Concurrent sessions</span>
+            <input type="number" id="concurrent-input" min="0" max="50" value="1">
+          </label>
+          <label class="field">
+            <span>Threat intelligence</span>
+            <select id="threat-select">
+              <option value="clean">Clean</option>
+              <option value="suspicious">Suspicious</option>
+              <option value="malicious">Malicious</option>
+            </select>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <label class="switch">
+            <input type="checkbox" id="mfa-input" checked>
+            <span class="switch-track"><span></span></span>
+            <span class="switch-text">MFA completed this session</span>
+          </label>
+          <label class="switch">
+            <input type="checkbox" id="newdevice-input">
+            <span class="switch-track"><span></span></span>
+            <span class="switch-text">Unrecognised device</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="reset-form">Reset</button>
+        <button type="submit" class="btn btn-primary" id="evaluate-btn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v6c0 4.4 3 8.2 7 9.4 4-1.2 7-5 7-9.4V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m9 12 2 2 4-4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Evaluate access
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section class="decision-panel" id="decision-panel">
+    <div class="decision-empty">
+      <div class="shield-illustration">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(103,232,249,.15)" stroke-width="1"/>
+          <circle cx="60" cy="60" r="38" fill="none" stroke="rgba(103,232,249,.22)" stroke-width="1" stroke-dasharray="4 6"/>
+          <path d="M60 22 88 34v20c0 18-12.4 33.6-28 38-15.6-4.4-28-20-28-38V34l28-12Z" fill="rgba(34,211,238,.06)" stroke="rgba(103,232,249,.55)" stroke-width="1.5"/>
+          <path d="m48 60 8 8 17-18" fill="none" stroke="#67e8f9" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h2>Awaiting evaluation</h2>
+      <p>Select an identity, device and resource. The engine will combine six contextual signals with organisational policy to produce an explainable decision.</p>
+      <div class="outcome-chips">
+        <span class="badge decision-allow">Allow</span>
+        <span class="badge decision-challenge">Challenge</span>
+        <span class="badge decision-restrict">Restrict</span>
+        <span class="badge decision-block">Block</span>
+      </div>
+      <ol class="pipeline-list">
+        <li><span>01</span>Authentication &amp; device posture</li>
+        <li><span>02</span>Behavioural anomaly score</li>
+        <li><span>03</span>Weighted risk calculation</li>
+        <li><span>04</span>Policy &amp; adaptive decision</li>
+      </ol>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <div><h2>Recent evaluations</h2><p>Decisions recorded by this console, newest first</p></div>
+    <a class="link" href="/monitoring">Open monitoring →</a>
+  </div>
+  <div class="table-wrap">
+    <table class="table" id="access-recent">
+      <thead><tr><th>Time</th><th>Identity</th><th>Device</th><th>Resource</th><th>Risk</th><th>Decision</th><th></th></tr></thead>
+      <tbody><tr><td colspan="7" class="empty compact">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/access.js" defer></script>
+{% endblock %}

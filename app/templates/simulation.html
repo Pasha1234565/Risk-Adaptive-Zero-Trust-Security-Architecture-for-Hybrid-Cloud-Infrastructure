@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Attack simulation{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="eyebrow">Phase 6 · security validation</p>
+    <h1>Attack simulation lab</h1>
+    <p class="lede">Generate labelled suspicious behaviour and observe how the engine scores and contains it. All scenarios execute locally against synthetic context.</p>
+  </div>
+  <div class="head-actions">
+    <span class="safety-chip">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v6c0 4.4 3 8.2 7 9.4 4-1.2 7-5 7-9.4V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 8v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="16" r="1" fill="currentColor"/></svg>
+      Authorised local environment only
+    </span>
+  </div>
+</div>
+
+<section class="card runner-card">
+  <div class="runner">
+    <div>
+      <h2>Traffic generator</h2>
+      <p>Run legitimate baseline traffic, a single attack scenario, or the full labelled evaluation suite.</p>
+    </div>
+    <div class="runner-actions">
+      <label class="inline-field">
+        <span>Sessions</span>
+        <input type="number" id="normal-count" value="25" min="1" max="200">
+      </label>
+      <button class="btn btn-ghost" id="run-normal">Run normal traffic</button>
+      <label class="inline-field">
+        <span>Variants</span>
+        <input type="number" id="variant-count" value="3" min="1" max="5">
+      </label>
+      <button class="btn btn-primary" id="run-full-eval">Run full evaluation</button>
+    </div>
+  </div>
+  <div class="runner-stats" id="sim-summary">
+    <div><span>Decisions this session</span><strong id="sim-total">0</strong></div>
+    <div><span>Elevated responses</span><strong id="sim-detected">0</strong></div>
+    <div><span>Highest risk</span><strong id="sim-maxrisk">—</strong></div>
+    <div><span>Avg decision latency</span><strong id="sim-latency">—</strong></div>
+  </div>
+</section>
+
+<div class="section-head">
+  <div><h2>Scenario library</h2><p>Twelve controlled threat patterns mapped to MITRE ATT&amp;CK</p></div>
+  <span class="chip" id="scenario-count">Loading…</span>
+</div>
+<div class="scenario-grid" id="scenario-grid">
+  <div class="scenario-card skeleton"></div><div class="scenario-card skeleton"></div><div class="scenario-card skeleton"></div>
+</div>
+
+<section class="card results-card" id="sim-results" hidden>
+  <div class="card-head">
+    <div><h2 id="sim-results-title">Scenario results</h2><p id="sim-results-sub">Labeled attack traffic evaluated by the live engine</p></div>
+    <a class="link" href="/monitoring?truth=attack">View in monitoring →</a>
+  </div>
+  <div class="table-wrap">
+    <table class="table" id="sim-table">
+      <thead><tr><th>Scenario</th><th>Technique</th><th>Identity → resource</th><th>Anomaly</th><th>Risk</th><th>Decision</th><th>Expected</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card note-card">
+  <div class="note-icon">!</div>
+  <div>
+    <h3>Scope and safety</h3>
+    <p>These simulations only manipulate request context inside this process. No packets are sent, no external host is contacted, and no real credentials are attacked. Detection results depend on the current thresholds and model, both of which can be tuned in Administration.</p>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/simulation.js" defer></script>
+{% endblock %}
