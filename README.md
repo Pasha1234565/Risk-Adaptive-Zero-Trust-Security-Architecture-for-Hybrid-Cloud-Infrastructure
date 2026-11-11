@@ -37,6 +37,18 @@ pip install -r requirements.txt
 python run.py --open
 ```
 
+#### Reproducible install
+
+`requirements*.txt` pin only the direct dependencies. `constraints.txt` pins the whole tree
+(including Starlette, Pydantic and SciPy) at the versions verified with the test suite on
+CPython 3.13.5:
+
+```bash
+python -m pip install -r requirements-dev.txt -c constraints.txt
+```
+
+SciPy 1.18.1 needs Python 3.12 or newer; on Python 3.11 install without `-c constraints.txt`.
+
 Open <http://127.0.0.1:8000/login>. The first launch creates `data/zerotrust.db`, seeds the demo
 inventory, trains the behavioural model and stores a baseline evaluation run.
 
@@ -62,11 +74,44 @@ python run.py --open            # open the browser automatically
 | `contractor@hybridcloud.io` | `Guest#2026` | Contractor | TOTP |
 | `svc-backup@hybridcloud.io` | `Service#2026` | Service account | Not enrolled |
 
-The login page lists the same accounts; click one to fill the form. TOTP codes are shown only
-inside the local console (Access console → **Get demo code**), because this prototype has no
-enrolled phone. In a real deployment the code lives on the authenticator.
+The login page lists the same accounts; click one to fill the form.
 
 The admin console is available only to the security administrator.
+
+### Step-up MFA and the local demo TOTP helper
+
+A **Challenge** decision asks for a 6-digit TOTP code, verified by `POST /api/access/challenge`.
+The demo identities have TOTP secrets but no enrolled phone, so the prototype includes a
+*demonstration helper* (`GET /api/auth/totp`, the **Get demo code** button in the Access
+console) that reveals the current code to the signed-in user.
+
+That helper defeats the purpose of step-up MFA: anyone who knows a password could also pass the
+second factor. It is therefore **disabled by default** and must be switched on explicitly:
+
+```powershell
+# PowerShell (current terminal only)
+$env:ZT_ENABLE_DEMO_TOTP = "true"
+python run.py
+```
+
+```bash
+# macOS / Linux / WSL
+ZT_ENABLE_DEMO_TOTP=true python run.py
+```
+
+Only `1`, `true`, `yes` or `on` enable it. When enabled:
+
+- the endpoint answers only **direct loopback requests**: the TCP peer must be `127.0.0.1` or
+  `::1`, the `Host` header must be a loopback name, and no proxy forwarding header
+  (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`) may be present. Other
+  clients get `403`;
+- the console shows a **Demo MFA helper on · local only** badge and the **Get demo code** button;
+- a warning is logged at startup.
+
+When disabled, the endpoint returns `404` (as if it did not exist), it is omitted from the API
+schema, and the Challenge panel asks for the code from an enrolled authenticator. TOTP
+verification itself is unchanged. **Never enable the helper on a shared, LAN-exposed or real
+deployment**; in production the code exists only on the user's authenticator.
 
 ---
 
@@ -159,7 +204,11 @@ context variants. Results are tagged as attack traffic and can be compared with 
 
 ## API
 
-Interactive OpenAPI documentation is served at <http://127.0.0.1:8000/api/docs>.
+Interactive OpenAPI documentation is served at <http://127.0.0.1:8000/api/docs>, and the
+machine-readable schema at <http://127.0.0.1:8000/api/openapi.json>. FastAPI's default `/docs`,
+`/redoc` and `/openapi.json` routes are disabled so there is one documented location. Swagger UI
+is served from pinned local assets (`app/static/vendor/swagger-ui/`, see `VENDORED.md` there),
+so the page works offline under the application's unchanged Content-Security-Policy.
 
 Key endpoints:
 
@@ -181,18 +230,26 @@ GET  /api/health
 ```
 
 Authentication uses an HttpOnly, SameSite=Lax session cookie. API clients may also send the
-token as `Authorization: Bearer <token>`.
+token as `Authorization: Bearer <token>`. `GET /api/auth/totp` exists only when the demo TOTP
+helper is enabled (see above).
+
+`POST /api/auth/logout` revokes the session on the server: the token's `jti` is stored in the
+`revoked_sessions` table until the token's own expiry, and every authenticated request checks
+it. A copied cookie or Bearer token therefore stops working immediately after logout, while
+other sessions of the same user are unaffected. Expired revocation rows are purged at startup
+and on each logout.
 
 ---
 
 ## Tests
 
 ```bash
-pip install -r requirements-dev.txt
-pytest -q
+pip install -r requirements-dev.txt -c constraints.txt
+pytest -q              # or: python -m pytest -q
 ```
 
-Tests use a temporary data directory, so they never touch the demo database.
+`pytest.ini` puts the repository root on the import path, so both commands work from the
+repository root. Tests use a temporary data directory, so they never touch the demo database.
 
 ---
 
@@ -209,13 +266,15 @@ app/
   risk.py          Six-signal risk engine, policy escalation, challenges
   simulator.py     Normal traffic and twelve attack scenarios
   evaluation.py    Labelled evaluation, metrics and stored runs
-  templates/       Jinja2 pages
-  static/          CSS, vanilla JS and the shield icon
+  templates/       Jinja2 pages (including api_docs.html for Swagger UI)
+  static/          CSS, vanilla JS, the shield icon and vendor/swagger-ui (pinned)
 data/              Runtime database, model and signing key (git-ignored)
 docs/              Architecture and evaluation notes
-tests/             Focused API and engine tests
+tests/             API, engine, session, MFA, docs and hygiene tests
 run.py             Local launcher
 start.bat/start.sh Convenience launchers
+pytest.ini         Test discovery and import path
+constraints.txt    Verified versions of the full dependency tree
 ```
 
 ---
@@ -228,6 +287,10 @@ This is a research prototype, not a hardened production service.
 - Passwords use PBKDF2-SHA256 with 120,000 iterations. The signing key is generated locally in
   `data/signing.key` (or supplied with `ZT_SESSION_SECRET`).
 - Login attempts are throttled: five failures within five minutes lock the account temporarily.
+- Logout revokes the session server-side (`revoked_sessions`, keyed by the token `jti`).
+- The demo TOTP helper is off by default (`ZT_ENABLE_DEMO_TOTP`) and loopback-only when on.
+- Local environment files (`.env`, `.env.*`, `*.env`) are git-ignored; only `.env.example`
+  may be committed.
 - Step-up challenge state is held in memory, so the app must run as a single worker. Do not run
   multiple Uvicorn workers with this prototype.
 - Cookies are HttpOnly and SameSite=Lax but not `Secure`, because the default deployment is
@@ -238,6 +301,20 @@ This is a research prototype, not a hardened production service.
 For a production deployment, replace SQLite with a shared database, move challenge state and
 sessions to Redis or another shared store, use a managed IdP for TOTP/WebAuthn, put TLS and an
 authenticating reverse proxy in front of the app, and forward events to a SIEM.
+
+### Known open security issues
+
+These were identified during the Phase 2 review and are **not fixed yet**:
+
+1. **No attempt limit on step-up verification.** A wrong code at `POST /api/access/challenge`
+   leaves the challenge usable for its full 180 seconds, so codes can be guessed repeatedly.
+2. **Challenges are not bound to the session user.** Any authenticated user who holds a
+   challenge id can submit it.
+3. **TOTP replay within the ±1 step window.** The last used time step is not recorded, so one
+   code can satisfy more than one challenge for about 90 seconds.
+4. **The PDP trusts the identity in the request body.** `POST /api/access/evaluate` takes
+   `user_id` from the client, and the simulation endpoints require only authentication, not an
+   administrator.
 
 ---
 

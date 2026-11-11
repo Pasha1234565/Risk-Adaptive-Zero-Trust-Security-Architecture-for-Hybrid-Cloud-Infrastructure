@@ -76,8 +76,14 @@ simulate packet transport; it evaluates the authorisation decision that would pr
 - Sessions are signed HS256 tokens with `sub` (user id), `iat`, `exp` and a random `jti`,
   delivered as an **HttpOnly, SameSite=Lax** cookie. The signing key is generated locally under
   `data/signing.key` or supplied via `ZT_SESSION_SECRET`.
+- The `jti` is the server-side session id. Logout writes it to `revoked_sessions` (kept until
+  the token's `exp`), and every authenticated request rejects revoked, expired, unsigned or
+  `jti`-less tokens, whether presented as the cookie or as `Authorization: Bearer`.
 - TOTP step-up uses RFC 6238 (30-second period, 6 digits, ±1 step tolerance). Interactive demo
   identities have secrets enrolled; the service account deliberately does not.
+- The demo helper `GET /api/auth/totp`, which reveals the current code, is disabled unless
+  `ZT_ENABLE_DEMO_TOTP` is true, and is then served only to direct loopback requests (loopback
+  peer and `Host`, no proxy forwarding headers). Disabled, it returns `404`.
 - Admin routes and APIs require `is_admin` on the server, not just a hidden navigation link.
 
 ## 4. Behavioural anomaly detection
@@ -99,8 +105,11 @@ sessions (1,200 by default, seed 7). Nine features are used:
 
 The raw isolation score is calibrated so a higher value means more anomalous, then combined with
 **contextual rule floors**: impossible travel (≥1,500 km and ≥3,000 km), failed logins ≥ 6,
-requests ≥ 40 per five minutes, egress ≥ 250 MB, off-hours access and new devices. The maximum
-of the model score and any matching floor becomes the behaviour score.
+requests ≥ 40 per five minutes, egress ≥ 250 MB, off-hours access (hour ≤ 5) and new devices
+(`new_device == 1`). The maximum of the model score and any matching floor becomes the
+behaviour score. Rule expressions (`<feature><op><number>` with `>=`, `<=`, `==`, `>` or `<`) are
+parsed by a strict pattern, never evaluated as code; a malformed rule, missing feature or
+non-numeric value simply does not match.
 
 Each result includes the top z-score attributions (`feature`, observed value, baseline, σ), which
 the console shows as "Baseline deviation". This keeps the detector explainable even though the
@@ -174,6 +183,7 @@ alerts(id, ts, severity, title, detail, event_id, status)
 eval_runs(id, ts, name, samples, metrics, config, duration_ms)
 settings(key, value)
 login_attempts(id, email, ts, success, source_ip)
+revoked_sessions(jti, user_id, revoked_at, expires_at)
 ```
 
 `signals`, `reasons`, `context` and `metrics` are JSON text. Keeping the full decision payload
@@ -207,7 +217,9 @@ Cache-Control: no-store  (API responses)
 ```
 
 There are no inline scripts or event-handler attributes. All JavaScript is loaded from
-`/static/js/` and attaches listeners with `addEventListener`.
+`/static/js/` and attaches listeners with `addEventListener`. The API docs at `/api/docs` follow
+the same policy: Swagger UI is served from pinned local copies in `/static/vendor/swagger-ui/`
+with a static bootstrap script, so the page needs no CDN, inline script or policy exception.
 
 ## 9. Production gaps
 
