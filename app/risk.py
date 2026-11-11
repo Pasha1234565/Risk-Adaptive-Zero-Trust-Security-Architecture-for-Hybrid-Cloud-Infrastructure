@@ -432,9 +432,11 @@ def verify_challenge(token: str, code: str) -> dict[str, Any]:
         event = database.row(conn, "SELECT * FROM events WHERE id = ?", (entry["event_id"],))
     if not user or not event:
         raise ValueError("Challenge target no longer exists")
-    from .security import verify_totp
+    from .security import consume_totp
 
-    if not verify_totp(user["mfa_secret"], code):
+    # consume_totp also rejects a time step already accepted for this user, so
+    # a code observed once cannot complete a second challenge.
+    if not consume_totp(user["id"], user["mfa_secret"], code):
         raise ValueError("Incorrect verification code")
     entry["used"] = True
 

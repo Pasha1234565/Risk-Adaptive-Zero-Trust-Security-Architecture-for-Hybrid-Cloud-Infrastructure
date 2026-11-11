@@ -97,7 +97,8 @@ def test_enabled_helper_serves_a_valid_code_to_local_signed_in_user(make_client,
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"code", "seconds_remaining", "note"}
+    assert set(body) == {"code", "seconds_remaining", "already_used", "note"}
+    assert body["already_used"] is False
     assert security.verify_totp(_mfa_secret(ANALYST[0]), body["code"])
     assert "mfa_secret" not in response.text
     assert _mfa_secret(ANALYST[0]) not in response.text

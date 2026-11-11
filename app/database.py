@@ -136,6 +136,14 @@ CREATE TABLE IF NOT EXISTS revoked_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires ON revoked_sessions(expires_at);
+
+-- TOTP replay protection: the last accepted 30-second time step per user. Only
+-- the counter is stored, never a code.
+CREATE TABLE IF NOT EXISTS totp_counters (
+    user_id      INTEGER PRIMARY KEY REFERENCES users(id),
+    last_counter INTEGER NOT NULL,
+    updated_at   TEXT NOT NULL
+);
 """
 
 
@@ -239,6 +247,32 @@ def purge_expired_revocations(now: int | None = None) -> int:
     with get_db() as conn:
         cursor = conn.execute("DELETE FROM revoked_sessions WHERE expires_at < ?", (cutoff,))
     return int(cursor.rowcount)
+
+
+def advance_totp_counter(user_id: int, counter: int) -> bool:
+    """Record ``counter`` as the user's last accepted TOTP step if it is newer.
+
+    A single UPSERT with a conditional update runs under SQLite's write lock,
+    so concurrent requests presenting the same code cannot both succeed.
+    Returns True when the counter was accepted.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """INSERT INTO totp_counters (user_id, last_counter, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE
+                   SET last_counter = excluded.last_counter, updated_at = excluded.updated_at
+                   WHERE excluded.last_counter > totp_counters.last_counter""",
+            (int(user_id), int(counter), utcnow()),
+        )
+        return cursor.rowcount == 1
+
+
+def last_totp_counter(user_id: int) -> int | None:
+    with get_db() as conn:
+        found = conn.execute(
+            "SELECT last_counter FROM totp_counters WHERE user_id = ?", (int(user_id),)
+        ).fetchone()
+    return int(found["last_counter"]) if found else None
 
 
 def is_empty() -> bool:

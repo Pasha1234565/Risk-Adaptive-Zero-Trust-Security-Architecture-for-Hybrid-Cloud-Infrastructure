@@ -44,6 +44,22 @@ def login(client: TestClient, email: str, password: str):
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
+@pytest.fixture(autouse=True)
+def fresh_mfa_state(client):
+    """Start every test with no recorded MFA state.
+
+    TOTP replay protection accepts each 30-second step once per user, so a
+    test that legitimately completes step-up for a user would otherwise make
+    the next test's code for that user look like a replay. Replay behaviour is
+    asserted inside individual tests.
+    """
+    from app import database
+
+    with database.get_db() as conn:
+        conn.execute("DELETE FROM totp_counters")
+    yield
+
+
 @pytest.fixture
 def make_client(client):
     """Factory for independent clients (own cookie jar) on the started app.

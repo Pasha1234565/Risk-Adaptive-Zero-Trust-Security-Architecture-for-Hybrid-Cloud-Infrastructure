@@ -278,8 +278,16 @@
     demo.addEventListener("click", async function () {
       try {
         const data = await window.ZT.api("/api/auth/totp");
+        const hint = document.getElementById("challenge-hint");
+        if (data.already_used) {
+          // Each code is accepted once; submitting it again would count as a failed attempt.
+          document.getElementById("mfa-code").value = "";
+          hint.textContent = "The current code was already used. Request a new one in " +
+            data.seconds_remaining + "s.";
+          return;
+        }
         document.getElementById("mfa-code").value = data.code;
-        document.getElementById("challenge-hint").textContent =
+        hint.textContent =
           "Demo code " + data.code + " · valid for " + data.seconds_remaining + "s. In production it stays on the enrolled device.";
       } catch (err) {
         window.ZT.toast(err.message, "error");

@@ -332,9 +332,13 @@ def current_totp(request: Request):
         selected = database.row(conn, "SELECT mfa_secret, mfa_enabled FROM users WHERE id = ?", (user["id"],))
     if not selected or not selected["mfa_enabled"]:
         raise HTTPException(status_code=400, detail="MFA is not enabled for this identity")
+    # Replay protection accepts each 30-second step once per user, so tell the
+    # console when the current code has already been spent.
+    last_accepted = database.last_totp_counter(user["id"])
     return {
         "code": security.totp_code(selected["mfa_secret"]),
         "seconds_remaining": security.totp_seconds_remaining(),
+        "already_used": last_accepted is not None and last_accepted >= security.current_totp_counter(),
         "note": "Demo only: in production this code lives on the enrolled authenticator.",
     }
 

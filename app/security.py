@@ -180,15 +180,42 @@ def totp_seconds_remaining(at: int | None = None) -> int:
     return 30 - int((at or time.time()) % 30)
 
 
-def verify_totp(secret: str, code: str, *, window: int = 1) -> bool:
+def current_totp_counter(at: float | None = None) -> int:
+    """RFC 6238 time-step counter (30-second steps) for ``at`` or now."""
+    return int(time.time() if at is None else at) // 30
+
+
+def matching_totp_counters(secret: str, code: str, *, window: int = 1) -> list[int]:
+    """Time-step counters within ``window`` steps of now whose code equals ``code``."""
     code = (code or "").strip().replace(" ", "")
     if not code.isdigit() or len(code) != 6 or not secret:
-        return False
-    counter = int(time.time()) // 30
-    return any(
-        hmac.compare_digest(_hotp(secret, counter + offset), code)
+        return []
+    counter = current_totp_counter()
+    return [
+        counter + offset
         for offset in range(-window, window + 1)
-    )
+        if hmac.compare_digest(_hotp(secret, counter + offset), code)
+    ]
+
+
+def verify_totp(secret: str, code: str, *, window: int = 1) -> bool:
+    """Stateless code check. Step-up MFA must use :func:`consume_totp`, which
+    also refuses a time step that was already accepted for the user."""
+    return bool(matching_totp_counters(secret, code, window=window))
+
+
+def consume_totp(user_id: int, secret: str, code: str, *, window: int = 1) -> bool:
+    """Verify ``code`` and atomically mark its time step as used for ``user_id``.
+
+    Returns True only if the matched step is newer than every step previously
+    accepted for this user, so the same code (or an older one still inside the
+    tolerance window) cannot be replayed. Invalid codes never change stored
+    state, and no code is ever stored, only the step counter.
+    """
+    counters = matching_totp_counters(secret, code, window=window)
+    if not counters:
+        return False
+    return database.advance_totp_counter(user_id, max(counters))
 
 
 # ---------------------------------------------------------------------------
