@@ -81,10 +81,68 @@ simulate packet transport; it evaluates the authorisation decision that would pr
   `jti`-less tokens, whether presented as the cookie or as `Authorization: Bearer`.
 - TOTP step-up uses RFC 6238 (30-second period, 6 digits, ±1 step tolerance). Interactive demo
   identities have secrets enrolled; the service account deliberately does not.
+- TOTP secrets are stored encrypted (section 3.1); they are decrypted only in memory, at
+  verification time.
 - The demo helper `GET /api/auth/totp`, which reveals the current code, is disabled unless
   `ZT_ENABLE_DEMO_TOTP` is true, and is then served only to direct loopback requests (loopback
   peer and `Host`, no proxy forwarding headers). Disabled, it returns `404`.
 - Admin routes and APIs require `is_admin` on the server, not just a hidden navigation link.
+
+### 3.1 MFA secret encryption and key management
+
+`app/mfa_crypto.py` stores each seed as `enc:v1:<kid>:<base64url(nonce ‖ ciphertext ‖ tag)>`:
+
+- AES-256-GCM from the `cryptography` package (no custom cryptography), a fresh random 96-bit
+  nonce per encryption, and associated data `zt-mfa-secret:v1:user:<id>` that binds the value to
+  its row. Moving a ciphertext to another account, changing a byte or using another key fails
+  authentication. Decryption never falls back to treating a value as plaintext.
+- `kid` is the first 8 hex digits of SHA-256(key). It is not secret and lets start-up detect a
+  wrong key before any user is affected.
+- Key source: `ZT_MFA_ENCRYPTION_KEY` (base64url, 32 bytes), else the key file `MFA_KEY_PATH`
+  (`data/mfa.key`, git-ignored, `ZT_MFA_KEY_PATH` overrides). The key is never written to the
+  database, to logs or to API responses; error messages name the source but not the value.
+
+Start-up (`seed.seed_identity` → `mfa_crypto.prepare`):
+
+1. Load the key. If none exists and the database has **no** encrypted secrets, generate a key
+   file with `keystore.create_once` (private temporary file + hard link, so workers starting
+   together all end up with one key). If encrypted secrets exist, look once more (another worker
+   may just have created the key) and otherwise stop with `MfaKeyError`: generating a new key
+   would make every secret unreadable.
+2. Under `BEGIN IMMEDIATE`, check that every stored `kid` equals the active key's id, then
+   encrypt every remaining plaintext secret. The transaction is all-or-nothing, so an
+   interrupted migration leaves the old values intact; already-encrypted rows are skipped, so
+   repeated starts are no-ops.
+
+At verification time a value that cannot be decrypted produces `503 Step-up verification is
+temporarily unavailable` and a server log line naming the user id and the reason (never the
+secret or key); it is not counted as a failed attempt.
+
+**Backup and recovery.** The key and the database must be backed up separately: the database
+alone cannot restore MFA, and the key alone reveals nothing without the database. To recover,
+restore `data/mfa.key` (or set `ZT_MFA_ENCRYPTION_KEY` to its content) and restart; start-up
+verifies the key id. Losing the key means re-enrolling every authenticator. Database backups
+made before this change still hold plaintext secrets and should be deleted or protected.
+
+**Limits.** A key file on the same host as the database protects against a leaked or copied
+database file, not against an attacker who can read the data directory or the process memory.
+It is not a KMS or HSM, and there is no rotation command yet (the `kid` prefix makes rotation
+possible: decrypt with the old key, encrypt with the new one, in one transaction).
+
+### 3.2 Visibility by role
+
+`inventory_scope(user)` in `app/main.py` decides what a caller may see:
+
+| Scope | Roles | Identities and devices | Resources | Events, alerts, dashboard |
+| --- | --- | --- | --- | --- |
+| `full` | `security_admin`, any `is_admin` | all | all | all; may acknowledge alerts |
+| `soc` | `analyst` | all | all | all; may acknowledge alerts |
+| `self` | `developer`, `finance`, `contractor`, `service` | own only | resources whose enabled role-restricting policies admit the role (`risk._policy_requirements`, the PDP's least-privilege rule) | own identity only; alert acknowledgement `403` |
+
+`/api/events/{id}` for another identity returns the same `404` as a missing event, and the
+SQL behind every scoped view adds `user_id = ?` rather than filtering in Python. Administrative
+records stay behind `require_admin` in `/api/admin/inventory`. No query used by these endpoints
+selects password hashes, MFA secrets, device fingerprints or session data.
 
 ## 4. Behavioural anomaly detection
 
@@ -159,13 +217,17 @@ cannot create an unreachable band.
 
 ### Step-up flow
 
-A `CHALLENGE` persists the event and creates an in-memory challenge token valid for 180 seconds
-(`CHALLENGE_TTL_SECONDS`). The server binds the token to the **subject** whose TOTP must be
-presented, the signed-in **actor** and **session** (`jti`) that requested it, and the device,
-resource and event of the original request. Nothing in the request body can change the binding.
+A `CHALLENGE` persists the event and, in the same transaction, a row in `mfa_challenges`
+valid for 180 seconds (`CHALLENGE_TTL_SECONDS`). The browser receives a random challenge id;
+the table stores only its SHA-256 hash. The row binds the challenge to the **subject** whose
+TOTP must be presented, the signed-in **actor**, a SHA-256 hash of the **session** id (`jti`),
+the device, resource and event of the original request, and a **mode** (`live` or
+`simulation`, below). Nothing in the request body can change the binding. Rows are purged 24 h
+after they expire.
 
 `POST /api/access/challenge` resolves the user and session from the authenticated session and
-then, under a process-wide lock:
+then, inside one `BEGIN IMMEDIATE` transaction (SQLite's write lock, which serialises
+verifications across threads **and** worker processes):
 
 1. rejects unknown, expired, used or cancelled tokens and tokens owned by another user or
    session with one generic `400 Challenge expired or already used` (no existence oracle, and the
@@ -178,13 +240,44 @@ then, under a process-wide lock:
 4. verifies the code with `security.consume_totp()`. The matched 30-second step must be newer
    than the subject's last accepted step (`totp_counters`), updated by a single conditional
    UPSERT, so concurrent duplicates and replays fail. A wrong code increments the challenge's
-   failure count; the third cancels it (`429`);
-5. on success, marks the token used, records the attempt, sets `mfa_verified = true`,
-   re-evaluates, and updates the event's decision and reasons.
+   failure count with `UPDATE … SET failed_attempts = failed_attempts + 1, status = CASE … END
+   WHERE status = 'pending' RETURNING failed_attempts`; the third cancels it (`429`);
+5. on success, consumes the row with `UPDATE … SET status = 'consumed' WHERE status = 'pending'
+   AND expires_at >= now` (exactly one row, or the request fails closed), records the attempt,
+   sets `mfa_verified = true`, re-evaluates, and updates the event's decision and reasons.
+
+Errors are returned out of the transaction rather than raised inside it, so their counter
+updates are committed. Statuses are `pending`, `consumed`, `cancelled`, `expired` and
+`invalidated` (bound request changed).
 
 The re-scored result can *recover* from Challenge to Allow if the remaining risk is low, or
-remain elevated if other signals are still bad. Challenge tokens are single-use and are not
-persisted, which is why the prototype must run with one worker.
+remain elevated if other signals are still bad.
+
+### Simulated versus real step-up
+
+`risk.challenge_mode()` marks a challenge `simulation` when the actor is not the subject or the
+scenario is not `live` (simulator traffic), and `live` otherwise. A simulation is answered with
+`simulated_outcome` (`success` / `failure`) by the operator session that issued it; the API
+requires a simulation role for that field. For simulations the subject's TOTP counter and
+identity throttle are never read or written; the outcome is recorded in `mfa_attempts` with
+`mode = 'simulation'` and the operator as `actor_user_id`, the 3-attempt limit per challenge
+still applies, and a success sets the event outcome to `step_up_simulated` with a reason that no
+authenticator was checked. A code sent to a simulation, or an outcome sent to a live challenge,
+is rejected with `400` and not counted. The identity throttle and its reset-on-success count
+only `mode = 'live'` rows. Event APIs expose a computed `simulated` flag
+(`scenario != 'live'` or actor ≠ subject).
+
+### Several worker processes
+
+All state that must be shared lives in SQLite: session revocations, TOTP counters, MFA
+attempts, challenges, login attempts, settings and policies. Start-up is safe when workers start
+together: seeding re-checks the user count under `BEGIN IMMEDIATE`, history bootstrap and the
+baseline evaluation are claimed once through an `INSERT OR IGNORE` settings row, the signing and
+MFA keys are published with `keystore.create_once`, and the model file is written to a temporary
+file and renamed into place. Verified with two Uvicorn processes sharing one database
+(`tests/test_challenge_persistence.py`) and with `uvicorn --workers 2` on Windows. Limits: one
+host and one database file (SQLite serialises writes), and an admin model retrain replaces the
+in-memory model only in the worker that served the request.
 
 ### Identity resolution and simulation
 
@@ -214,12 +307,18 @@ settings(key, value)
 login_attempts(id, email, ts, success, source_ip)
 revoked_sessions(jti, user_id, revoked_at, expires_at)
 totp_counters(user_id, last_counter, updated_at)
-mfa_attempts(id, user_id, actor_user_id, ts, success)
+mfa_attempts(id, user_id, actor_user_id, ts, success, mode)
+mfa_challenges(token_hash, event_id, user_id, device_id, resource_id, actor_user_id,
+               session_hash, mode, created_at, expires_at, failed_attempts, status,
+               consumed_at)
 ```
 
+`users.mfa_secret` holds the AES-GCM ciphertext (section 3.1).
+
 Schema changes are additive. `init_db()` creates missing tables and applies column migrations
-listed in `database.COLUMN_MIGRATIONS` (currently `events.actor_user_id`) only when the column is
-absent, so existing rows are preserved and repeated runs are no-ops.
+listed in `database.COLUMN_MIGRATIONS` (currently `events.actor_user_id` and
+`mfa_attempts.mode`) only when the column is absent, so existing rows are preserved and repeated
+runs are no-ops. Plaintext MFA secrets are encrypted by the start-up step in section 3.1.
 
 `signals`, `reasons`, `context` and `metrics` are JSON text. Keeping the full decision payload
 means the monitoring and evaluation views do not need to re-run the engine to explain history.
@@ -253,6 +352,19 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 Cache-Control: no-store  (API responses)
 ```
 
+The same headers are applied to error responses, including the generic `500` returned by the
+catch-all exception handler (which Starlette runs outside the middleware stack).
+
+### Request validation and error bodies
+
+Every request body is a Pydantic model (the access context forbids unknown fields and bounds
+every number; ids stay inside SQLite's INTEGER range; enumerations are checked). Validation
+failures are `422` with `{"detail": "<readable summary>", "errors": [{"loc", "msg", "type"}]}`.
+The rejected input and Pydantic's `ctx` are not returned, location parts are reduced to
+`[A-Za-z0-9_-]`, and unknown field names are replaced by `unknown_field`. Unexpected exceptions
+are logged with their traceback on the server and answered with `{"detail": "Internal server
+error"}`.
+
 There are no inline scripts or event-handler attributes. All JavaScript is loaded from
 `/static/js/` and attaches listeners with `addEventListener`. The API docs at `/api/docs` follow
 the same policy: Swagger UI is served from pinned local copies in `/static/vendor/swagger-ui/`
@@ -263,13 +375,14 @@ with a static bootstrap script, so the page needs no CDN, inline script or polic
 A real deployment would need:
 
 - an external IdP with WebAuthn/passkeys and device attestation;
-- a shared policy store and a shared cache for challenge/session state;
+- a shared policy store and a database server instead of one SQLite file;
+- a KMS or HSM for the MFA encryption key, with rotation;
 - TLS termination, HSTS and an authenticating reverse proxy;
 - a relational database with backups, migrations and row-level audit;
 - an actual enforcement layer (service mesh, API gateway, VPN policy) rather than synthetic
   resource records;
 - SIEM/log forwarding, alert deduplication and on-call integration;
-- multi-worker operation with distributed state.
+- operation across several hosts (the prototype supports several workers on one host only).
 
 These are intentionally out of scope for the local prototype; the seams are called out in the
 code so they can be replaced without redesigning the decision logic.

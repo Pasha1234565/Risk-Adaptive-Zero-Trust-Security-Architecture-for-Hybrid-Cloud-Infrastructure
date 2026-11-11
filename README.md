@@ -120,6 +120,7 @@ has already been used, the helper says so and asks you to wait for the next code
 
 | Rule | Behaviour |
 | --- | --- |
+| Storage | Challenges are rows in the SQLite table `mfa_challenges`, shared by every worker process. Only SHA-256 hashes of the challenge id and of the session id are stored. Each verification runs in one `BEGIN IMMEDIATE` transaction with conditional updates, so concurrent answers (threads or processes) cannot both succeed or exceed the attempt limit. Rows are purged 24 h after expiry. |
 | Lifetime | A challenge expires 180 s after it is issued (`CHALLENGE_TTL_SECONDS`). |
 | Single use | A completed challenge cannot be used again. |
 | Ownership | Only the **same user in the same session** that triggered the challenge may answer it. Another user, an administrator, or the same user in another session (including after logout) gets `400 Challenge expired or already used`, and such attempts do not count against the owner. |
@@ -128,7 +129,25 @@ has already been used, the helper says so and asks you to wait for the next code
 | Replay | The matched TOTP time step is stored per user (`totp_counters`); a step that was already accepted, or an older one, is rejected even inside the ±1 step tolerance. Only counters are stored, never codes. |
 
 Failed and successful verifications are recorded in `mfa_attempts` (identity, signed-in actor,
-time, outcome; no codes).
+time, outcome, `live`/`simulation` mode; no codes).
+
+### Simulated step-up (operators)
+
+A challenge has a **mode**. It is `simulation` when an operator evaluates another identity or
+the request comes from the attack/normal-traffic simulator, and `live` otherwise.
+
+| | Live challenge | Simulation challenge |
+| --- | --- | --- |
+| Answer | `{"challenge_id", "code"}` (the subject's TOTP code) | `{"challenge_id", "simulated_outcome": "success" \| "failure"}` |
+| Who may answer | the user and session that triggered it | the operator session that triggered it; `simulated_outcome` needs a simulation role (`403` otherwise) |
+| Subject's TOTP counter / throttle | used | never touched |
+| Attempt limit | 3 per challenge, 6 per identity per 15 min | 3 simulated failures per challenge |
+| Wrong kind of answer | `400`, not counted | `400`, not counted |
+| Recorded as | `mfa_attempts.mode = 'live'`, outcome `step_up_verified` | `mfa_attempts.mode = 'simulation'` with the operator as actor, outcome `step_up_simulated` |
+
+Sending both or neither of `code` and `simulated_outcome` is `422`. Event APIs return a
+computed `simulated` flag, and the access console shows **Simulate MFA success / failure**
+buttons instead of the code field for simulation challenges.
 
 ### Who can evaluate whom
 
@@ -146,10 +165,28 @@ The access console and `POST /api/access/evaluate` always take the **actor** fro
 - Every stored event keeps the evaluated **subject** (`events.user_id`) and the **actor**
   (`events.actor_user_id`). Monitoring shows "Initiated by" and marks simulations. System
   traffic, and events recorded before this column existed, have no actor.
-- A challenge raised by a simulation belongs to the operator's session; the subject's
-  authenticator code is still required.
+- A challenge raised by a simulation belongs to the operator's session and is answered with a
+  simulated outcome, never with the subject's code (see above).
 - For non-simulation roles the console's identity selector shows only the signed-in user, and the
   simulation page explains the restriction. The server rule is the control; the UI mirrors it.
+
+### What each role can see
+
+Visibility is enforced on the server (`inventory_scope` in `app/main.py`):
+
+| Role | `/api/context/inventory` | Resources listed | Events, alerts, dashboard | Alert acknowledgement |
+| --- | --- | --- | --- | --- |
+| `security_admin` | every identity and device (`scope: "full"`) | all | all | yes |
+| `analyst` (SOC) | every identity and device (`scope: "soc"`) | all | all | yes |
+| `developer`, `finance`, `contractor` | own identity and devices (`scope: "self"`) | those whose enabled role-restricting policies admit the role | own identity only | no (`403`) |
+| `service` | own identity and devices (`scope: "self"`) | same rule; no role-restricted policy names `service`, so only unrestricted categories (3 in the demo data) | own identity only | no (`403`) |
+
+- Another identity's event is answered `404`, exactly like a missing one.
+- Account flags, timestamps, policies and record counts stay in the admin-only
+  `/api/admin/inventory`. No endpoint returns password hashes, MFA secrets, device fingerprints
+  or session ids.
+- `/api/topology` (resource names, zones and sensitivity for the architecture page) is still
+  visible to every signed-in user; it contains no identities or devices.
 
 ---
 
@@ -277,6 +314,20 @@ it. A copied cookie or Bearer token therefore stops working immediately after lo
 other sessions of the same user are unaffected. Expired revocation rows are purged at startup
 and on each logout.
 
+Request validation: ids are limited to SQLite's INTEGER range (path ids must be at least 1),
+numeric context fields are bounded and finite, enumerations (`threat_intel`, `geo`, `decision`,
+`truth`, alert `status`, `scenario_id`, `simulated_outcome`) are checked, and unknown context
+fields are refused. Invalid input is `422` with a readable message and field list, without
+echoing the rejected values:
+
+```json
+{"detail": "Invalid request: event_id: Input should be a valid integer, unable to parse string as an integer",
+ "errors": [{"loc": ["body", "event_id"], "msg": "Input should be a valid integer, ...", "type": "int_parsing"}]}
+```
+
+Unexpected server errors return `{"detail": "Internal server error"}` (with the security
+headers); the traceback is written to the server log only.
+
 ---
 
 ## Tests
@@ -299,6 +350,8 @@ app/
   config.py        Paths, thresholds, weights, PBKDF2 work factor
   database.py      SQLite schema, settings and helpers
   security.py      PBKDF2-SHA256, HS256 session tokens, TOTP
+  mfa_crypto.py    AES-256-GCM encryption of TOTP secrets, key loading, migration
+  keystore.py      Atomic creation of local key files (safe with several workers)
   seed.py          Demo identities, devices, resources and policies
   anomaly.py       IsolationForest baseline, scoring and explanations
   risk.py          Six-signal risk engine, policy escalation, challenges
@@ -306,7 +359,7 @@ app/
   evaluation.py    Labelled evaluation, metrics and stored runs
   templates/       Jinja2 pages (including api_docs.html for Swagger UI)
   static/          CSS, vanilla JS, the shield icon and vendor/swagger-ui (pinned)
-data/              Runtime database, model and signing key (git-ignored)
+data/              Runtime database, model, signing key and MFA key (git-ignored)
 docs/              Architecture and evaluation notes
 tests/             API, engine, session, MFA, docs and hygiene tests
 run.py             Local launcher
@@ -326,22 +379,32 @@ This is a research prototype, not a hardened production service.
   `data/signing.key` (or supplied with `ZT_SESSION_SECRET`).
 - Login attempts are throttled: five failures within five minutes lock the account temporarily.
 - Logout revokes the session server-side (`revoked_sessions`, keyed by the token `jti`).
+- TOTP secrets are encrypted at rest with AES-256-GCM (see *MFA secret encryption* below).
 - The demo TOTP helper is off by default (`ZT_ENABLE_DEMO_TOTP`) and loopback-only when on.
 - Step-up challenges are owned by the requesting user and session, limited to 3 wrong codes per
   challenge and 6 per identity per 15 minutes, and each TOTP time step is accepted once.
 - Access evaluation trusts only the session identity; acting for another identity and running
   simulations require the `security_admin` or `analyst` role, and the actor is audited.
+  Simulated step-up never touches the subject's real MFA state.
+- Identities, devices, events and alerts are visible by role (see *What each role can see*).
 - Local environment files (`.env`, `.env.*`, `*.env`) are git-ignored; only `.env.example`
   may be committed.
-- Step-up challenge state is held in memory, so the app must run as a single worker. Do not run
-  multiple Uvicorn workers with this prototype.
+- Challenges, revocations, TOTP counters and throttles are in SQLite, so several worker
+  processes on **one host** sharing one database file work. This was tested with two separate
+  Uvicorn processes on one database (`tests/test_challenge_persistence.py`) and with
+  `uvicorn app.main:app --workers 2` on Windows (7 of 7 challenge lifecycles succeeded; with
+  the earlier in-memory challenges 5 of 6 failed and a worker crashed during seeding).
+  Start-up seeding, history bootstrap, the baseline evaluation and key-file creation are safe
+  when workers start together.
+  An admin model retrain only replaces the model in the worker that handled it; restart the
+  workers afterwards.
 - Cookies are HttpOnly and SameSite=Lax but not `Secure`, because the default deployment is
   plain HTTP on localhost. Terminate TLS in front of the app before exposing it.
 - The app sets a strict Content-Security-Policy (`script-src 'self'`), HSTS is left to the
   reverse proxy, and admin APIs check `is_admin` server-side.
 
-For a production deployment, replace SQLite with a shared database, move challenge state and
-sessions to Redis or another shared store, use a managed IdP for TOTP/WebAuthn, put TLS and an
+For a production deployment, replace SQLite with a shared database server, keep the MFA key in
+a KMS or HSM, use a managed IdP for TOTP/WebAuthn, put TLS and an
 authenticating reverse proxy in front of the app, and forward events to a SIEM.
 
 ### Security issues from the Phase 2 review
@@ -358,22 +421,60 @@ regression tests:
 
 Cross-control negative tests are in `tests/test_security_negative.py`.
 
+### Security issues addressed in Phase 2.2
+
+| Issue | Status | Tests |
+| --- | --- | --- |
+| TOTP secrets stored in plaintext | Fixed: AES-256-GCM at rest, key outside the database, automatic migration | `tests/test_mfa_encryption.py` |
+| Every user could list all identities, devices and events | Fixed: role-based visibility, own-records scope, triage limited to SOC roles | `tests/test_inventory_visibility.py` |
+| Challenges in process memory (single worker only) | Fixed: `mfa_challenges` table with atomic updates; multi-worker start-up made safe | `tests/test_challenge_persistence.py` |
+| Operator simulations consumed the subject's real MFA | Fixed: simulation challenges take simulated outcomes only | `tests/test_simulated_mfa.py` |
+| Malformed requests returned 500 | Fixed: validation on every endpoint, sanitised 422 and 500 bodies | `tests/test_malformed_input.py` |
+
+End-to-end checks across these controls are in `tests/test_phase22_cross_cutting.py`.
+
+### MFA secret encryption and key backup
+
+`users.mfa_secret` holds `enc:v1:<key id>:<base64url(nonce | ciphertext | tag)>`: AES-256-GCM
+(`cryptography`), a random 96-bit nonce per value, and the user id as associated data, so a
+ciphertext copied to another account does not decrypt. The key is never stored in the database.
+
+| Source (first match wins) | Use |
+| --- | --- |
+| `ZT_MFA_ENCRYPTION_KEY` | base64url-encoded 32-byte key. Generate one with `python -m app.mfa_crypto generate-key`. |
+| `ZT_MFA_KEY_PATH` (default `data/mfa.key`) | key file, git-ignored. Created automatically on first start **only** if the database has no encrypted secrets yet. |
+
+- On start-up, plaintext secrets left by older versions are encrypted in one transaction
+  (all or nothing; repeated starts change nothing).
+- If the database has encrypted secrets and the key is missing or different, the app **refuses
+  to start** with an explanatory error instead of generating a new key. A secret that cannot be
+  decrypted at verification time returns `503` and does not count as a failed attempt. Keys and
+  secrets are never logged or returned by an API.
+- **Back up the key separately from the database.** Without it no enrolled authenticator can
+  be verified, and a database backup alone cannot restore step-up MFA. To recover, restore the
+  key file to `data/mfa.key` (or set `ZT_MFA_ENCRYPTION_KEY` to its content) and restart.
+- Database backups taken **before** Phase 2.2 still contain plaintext secrets; delete or protect
+  them.
+- This is local key storage for a prototype: the key file sits on the same host as the database
+  and is protected only by file-system permissions. It is not enterprise key management, and
+  there is no key-rotation command yet (the key id in each value makes rotation possible).
+
 ### Known limitations
 
 These remain true and are acceptable only for a local research prototype:
 
-- **Single process only.** Challenges and the challenge lock live in memory, so challenges are
-  lost on restart and the app must run as one Uvicorn worker.
-- **Operators can spend a subject's MFA budget.** Wrong codes entered by an operator on a
-  simulated challenge count towards the subject's per-identity limit, so an analyst could pause
-  step-up for another identity for up to 15 minutes. Both are trusted roles here.
-- **Directory visibility.** `GET /api/context/inventory` still lists every identity, device and
-  resource to any signed-in user (it powers the console); only acting on them is restricted.
+- **One host, one SQLite file.** Several workers are supported only on the same machine and
+  file system; SQLite serialises writes, and an admin model retrain updates only the worker
+  that handled it until the others restart.
+- **Local key management.** The MFA key is a file next to the database (or an environment
+  variable); there is no KMS, HSM or rotation tooling.
+- **SOC roles see every identity.** Analysts and security administrators see all identities,
+  devices and events, which their triage and simulation work needs.
 - **Guessing is limited, not impossible.** With the defaults an attacker who already has a
   password gets at most 6 guesses per identity per 15 minutes, each with about a 3-in-a-million
   chance.
-- **Demo-grade MFA.** TOTP secrets are stored in the database in plaintext, and the optional demo
-  helper reveals codes on loopback.
+- **Demo-grade MFA.** TOTP remains the only second factor, and the optional demo helper reveals
+  codes on loopback.
 - **Transport and deployment.** No `Secure` cookie flag, no HSTS, SQLite, synthetic data, and no
   external IdP. The system is not production-ready.
 

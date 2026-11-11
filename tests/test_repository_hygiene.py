@@ -46,6 +46,7 @@ def _ignored(path: str) -> bool:
         "data/zerotrust.db",
         "data/behaviour_model.joblib",
         "data/signing.key",
+        "data/mfa.key",
         ".secret_key",
     ],
 )
