@@ -48,15 +48,17 @@ def login(client: TestClient, email: str, password: str):
 def fresh_mfa_state(client):
     """Start every test with no recorded MFA state.
 
-    TOTP replay protection accepts each 30-second step once per user, so a
-    test that legitimately completes step-up for a user would otherwise make
-    the next test's code for that user look like a replay. Replay behaviour is
-    asserted inside individual tests.
+    TOTP replay protection accepts each 30-second step once per user, and the
+    per-identity failure budget spans all of a user's challenges. Without a
+    reset, one test's legitimate step-up or deliberate wrong codes would leak
+    into the next test. Replay and throttling are asserted inside individual
+    tests.
     """
     from app import database
 
     with database.get_db() as conn:
         conn.execute("DELETE FROM totp_counters")
+        conn.execute("DELETE FROM mfa_attempts")
     yield
 
 

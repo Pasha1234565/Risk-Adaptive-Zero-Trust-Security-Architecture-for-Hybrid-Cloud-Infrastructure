@@ -272,6 +272,13 @@
       } catch (err) {
         window.ZT.toast(err.message, "error");
         window.ZT.setLoading(verify, false);
+        if (err.status === 429) {
+          // Attempt limit reached: this challenge cannot be completed any more.
+          verify.disabled = true;
+          document.getElementById("mfa-code").disabled = true;
+          if (demo) demo.disabled = true;
+          document.getElementById("challenge-hint").textContent = err.message;
+        }
       }
     });
     if (!demo) return;

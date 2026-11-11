@@ -204,7 +204,7 @@ def test_step_up_challenge_over_http_invalid_valid_and_single_use(make_client):
 
     wrong = browser.post("/api/access/challenge", json={"challenge_id": challenge_id, "code": _invalid_code(secret)})
     assert wrong.status_code == 400
-    assert wrong.json()["detail"] == "Incorrect verification code"
+    assert wrong.json()["detail"] == "Incorrect verification code. 2 attempt(s) remaining."
 
     right = browser.post(
         "/api/access/challenge", json={"challenge_id": challenge_id, "code": security.totp_code(secret)}

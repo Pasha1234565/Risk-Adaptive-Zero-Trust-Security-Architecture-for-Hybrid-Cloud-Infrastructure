@@ -442,11 +442,14 @@ def evaluate_access(payload: AccessPayload, request: Request):
 
 @app.post("/api/access/challenge")
 def complete_challenge(payload: ChallengePayload, request: Request):
-    require_user(request)
+    user = require_user(request)
     try:
-        return risk.verify_challenge(payload.challenge_id, payload.code)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return risk.verify_challenge(payload.challenge_id, payload.code, actor_id=user["id"])
+    except risk.ChallengeLimitError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(status_code=exc.status_code, detail=str(exc), headers=headers) from exc
+    except risk.ChallengeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @app.post("/api/access/preview")

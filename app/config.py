@@ -21,6 +21,16 @@ def env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    """Read a positive integer environment variable; fall back to ``default``
+    when it is unset or not an integer, and never go below ``minimum``."""
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, value)
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("ZT_DATA_DIR", BASE_DIR / "data"))
 STATIC_DIR = BASE_DIR / "app" / "static"
@@ -48,6 +58,19 @@ DEMO_TOTP_ENABLED = env_flag("ZT_ENABLE_DEMO_TOTP", default=False)
 
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCK_SECONDS = 300
+
+# Step-up MFA challenges (POST /api/access/challenge).
+# - A challenge expires CHALLENGE_TTL_SECONDS after it is issued.
+# - It is cancelled after MFA_MAX_ATTEMPTS_PER_CHALLENGE incorrect codes.
+# - Across all of an identity's challenges, MFA_USER_MAX_FAILURES incorrect
+#   codes within MFA_USER_FAILURE_WINDOW_SECONDS pause verification for that
+#   identity until the oldest failure leaves the window, so issuing new
+#   challenges does not reset the guess budget. Nothing locks permanently, and
+#   a successful verification starts a fresh window.
+CHALLENGE_TTL_SECONDS = 180
+MFA_MAX_ATTEMPTS_PER_CHALLENGE = env_int("ZT_MFA_MAX_ATTEMPTS", 3)
+MFA_USER_MAX_FAILURES = env_int("ZT_MFA_USER_MAX_FAILURES", 6)
+MFA_USER_FAILURE_WINDOW_SECONDS = env_int("ZT_MFA_USER_WINDOW_SECONDS", 900)
 
 # Default risk engine configuration. Stored in the settings table so it can be
 # tuned from the admin console without a code change.

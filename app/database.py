@@ -12,7 +12,7 @@ import json
 import sqlite3
 import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
 from . import config
@@ -144,6 +144,19 @@ CREATE TABLE IF NOT EXISTS totp_counters (
     last_counter INTEGER NOT NULL,
     updated_at   TEXT NOT NULL
 );
+
+-- Step-up MFA verification outcomes per identity, used for throttling and
+-- audit. user_id is the identity whose code was checked; actor_user_id is the
+-- signed-in user who submitted it (when known). Codes are never stored.
+CREATE TABLE IF NOT EXISTS mfa_attempts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    actor_user_id INTEGER REFERENCES users(id),
+    ts            TEXT NOT NULL,
+    success       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_attempts_user_ts ON mfa_attempts(user_id, ts);
 """
 
 
@@ -265,6 +278,34 @@ def advance_totp_counter(user_id: int, counter: int) -> bool:
             (int(user_id), int(counter), utcnow()),
         )
         return cursor.rowcount == 1
+
+
+def record_mfa_attempt(user_id: int, success: bool, actor_user_id: int | None = None) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO mfa_attempts (user_id, actor_user_id, ts, success) VALUES (?, ?, ?, ?)",
+            (int(user_id), actor_user_id, utcnow(), 1 if success else 0),
+        )
+
+
+def recent_mfa_failures(user_id: int, window_seconds: int) -> tuple[int, str | None]:
+    """Failed verifications for ``user_id`` inside the window, counted only
+    since the identity's last successful verification.
+
+    Returns ``(count, oldest_counted_failure_ts)``.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat(timespec="seconds")
+    with get_db() as conn:
+        last_success = conn.execute(
+            "SELECT MAX(ts) AS ts FROM mfa_attempts WHERE user_id = ? AND success = 1", (int(user_id),)
+        ).fetchone()["ts"]
+        since = max(cutoff, last_success) if last_success else cutoff
+        found = conn.execute(
+            "SELECT COUNT(*) AS n, MIN(ts) AS oldest FROM mfa_attempts "
+            "WHERE user_id = ? AND success = 0 AND ts > ?",
+            (int(user_id), since),
+        ).fetchone()
+    return int(found["n"]), found["oldest"]
 
 
 def last_totp_counter(user_id: int) -> int | None:

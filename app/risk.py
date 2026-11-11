@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import math
 import secrets
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -411,34 +412,116 @@ def evaluate(
     return result
 
 
+class ChallengeError(ValueError):
+    """Step-up verification failure; ``status_code`` is the HTTP status to use."""
+
+    status_code = 400
+
+
+class ChallengeLimitError(ChallengeError):
+    """Too many incorrect codes, for one challenge or for the identity."""
+
+    status_code = 429
+
+    def __init__(self, message: str, retry_after: int | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+# One message for unknown, expired, used and cancelled challenges, so a caller
+# cannot tell which of those states a challenge id is in.
+INVALID_CHALLENGE = "Challenge expired or already used"
+
+# Serialises challenge state changes: the app runs as one process whose sync
+# endpoints execute in a thread pool.
+_CHALLENGE_LOCK = threading.Lock()
+
+
+def _purge_expired_challenges(now: float) -> None:
+    for token in [key for key, entry in CHALLENGES.items() if entry["expires"] < now]:
+        CHALLENGES.pop(token, None)
+
+
 def _issue_challenge(event_id: int, user_id: int) -> dict[str, Any]:
     token = secrets.token_urlsafe(24)
-    CHALLENGES[token] = {
-        "event_id": event_id,
-        "user_id": user_id,
-        "expires": time.time() + 180,
-        "used": False,
+    now = time.time()
+    with _CHALLENGE_LOCK:
+        _purge_expired_challenges(now)
+        CHALLENGES[token] = {
+            "event_id": event_id,
+            "user_id": user_id,
+            "expires": now + config.CHALLENGE_TTL_SECONDS,
+            "used": False,
+            "failed_attempts": 0,
+        }
+    return {
+        "id": token,
+        "expires_in": config.CHALLENGE_TTL_SECONDS,
+        "method": "TOTP",
+        "max_attempts": config.MFA_MAX_ATTEMPTS_PER_CHALLENGE,
     }
-    return {"id": token, "expires_in": 180, "method": "TOTP"}
 
 
-def verify_challenge(token: str, code: str) -> dict[str, Any]:
-    entry = CHALLENGES.get(token)
-    if not entry or entry["used"] or entry["expires"] < time.time():
-        CHALLENGES.pop(token, None)
-        raise ValueError("Challenge expired or already used")
-    with database.get_db() as conn:
-        user = database.row(conn, "SELECT * FROM users WHERE id = ?", (entry["user_id"],))
-        event = database.row(conn, "SELECT * FROM events WHERE id = ?", (entry["event_id"],))
-    if not user or not event:
-        raise ValueError("Challenge target no longer exists")
+def _identity_retry_after(oldest_failure: str | None) -> int:
+    """Seconds until the oldest counted failure leaves the throttle window."""
+    try:
+        oldest = datetime.fromisoformat(oldest_failure) if oldest_failure else None
+    except ValueError:
+        oldest = None
+    if oldest is None:
+        return config.MFA_USER_FAILURE_WINDOW_SECONDS
+    elapsed = (datetime.now(timezone.utc) - oldest).total_seconds()
+    return max(1, int(config.MFA_USER_FAILURE_WINDOW_SECONDS - elapsed) + 1)
+
+
+def verify_challenge(token: str, code: str, *, actor_id: int | None = None) -> dict[str, Any]:
+    """Complete a step-up challenge with a TOTP code and re-evaluate the request.
+
+    Raises ChallengeError (400) for unknown, expired, used or cancelled
+    challenges and for incorrect codes, and ChallengeLimitError (429) when
+    the challenge or the identity has run out of attempts. ``actor_id`` is the
+    signed-in user submitting the code, recorded with each attempt.
+    """
     from .security import consume_totp
 
-    # consume_totp also rejects a time step already accepted for this user, so
-    # a code observed once cannot complete a second challenge.
-    if not consume_totp(user["id"], user["mfa_secret"], code):
-        raise ValueError("Incorrect verification code")
-    entry["used"] = True
+    with _CHALLENGE_LOCK:
+        entry = CHALLENGES.get(token) if isinstance(token, str) else None
+        if not entry or entry["used"] or entry["expires"] < time.time():
+            if entry is not None:
+                CHALLENGES.pop(token, None)
+            raise ChallengeError(INVALID_CHALLENGE)
+        with database.get_db() as conn:
+            user = database.row(conn, "SELECT * FROM users WHERE id = ?", (entry["user_id"],))
+            event = database.row(conn, "SELECT * FROM events WHERE id = ?", (entry["event_id"],))
+        if not user or not event:
+            CHALLENGES.pop(token, None)
+            raise ChallengeError(INVALID_CHALLENGE)
+
+        # Identity-wide budget: creating new challenges cannot reset it.
+        failures, oldest = database.recent_mfa_failures(user["id"], config.MFA_USER_FAILURE_WINDOW_SECONDS)
+        if failures >= config.MFA_USER_MAX_FAILURES:
+            retry_after = _identity_retry_after(oldest)
+            raise ChallengeLimitError(
+                "Too many incorrect verification codes for this identity. "
+                f"Try again in {max(1, -(-retry_after // 60))} minute(s).",
+                retry_after=retry_after,
+            )
+
+        # consume_totp also rejects a time step already accepted for this user, so
+        # a code observed once cannot complete a second challenge.
+        if not consume_totp(user["id"], user["mfa_secret"], code):
+            entry["failed_attempts"] += 1
+            database.record_mfa_attempt(user["id"], False, actor_id)
+            remaining = config.MFA_MAX_ATTEMPTS_PER_CHALLENGE - entry["failed_attempts"]
+            if remaining <= 0:
+                CHALLENGES.pop(token, None)
+                raise ChallengeLimitError(
+                    "Too many incorrect verification codes. This challenge has been cancelled; "
+                    "submit a new access request."
+                )
+            raise ChallengeError(f"Incorrect verification code. {remaining} attempt(s) remaining.")
+        entry["used"] = True
+        database.record_mfa_attempt(user["id"], True, actor_id)
 
     context = json.loads(event["context"])
     context["mfa_verified"] = True
