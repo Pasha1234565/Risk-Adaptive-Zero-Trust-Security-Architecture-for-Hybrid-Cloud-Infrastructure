@@ -314,6 +314,25 @@ def test_missing_or_wrong_key_stops_startup_instead_of_replacing_it(legacy_db, m
         assert mfa_crypto.decrypt_secret(stored[user_id], user_id) == plaintext
 
 
+def test_key_created_by_a_concurrent_worker_is_picked_up(legacy_db, monkeypatch):
+    """Worker B finds no key file, then worker A creates the key and encrypts
+    the secrets before B looks at the database. B must use A's key instead of
+    refusing to start."""
+    with database.get_db() as conn:
+        mfa_crypto.prepare(conn)  # "worker A": key file + encrypted secrets
+    real_load = mfa_crypto.load_key
+    calls = {"n": 0}
+
+    def load_key_racing():
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real_load()
+
+    monkeypatch.setattr(mfa_crypto, "load_key", load_key_racing)
+    with database.get_db() as conn:
+        assert mfa_crypto.prepare(conn) == 0  # "worker B"
+    assert calls["n"] == 2
+
+
 def test_env_key_is_used_for_a_new_database(tmp_path, monkeypatch):
     key_text = mfa_crypto.generate_key()
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)

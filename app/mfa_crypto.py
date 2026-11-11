@@ -177,6 +177,12 @@ def ensure_key(conn: sqlite3.Connection) -> bytes:
     if key is not None:
         return key
     if _stored_key_ids(conn):
+        # A key file is always published before the first secret is encrypted
+        # with it, so another worker that started at the same moment may have
+        # created it after the check above: look once more before giving up.
+        key = load_key()
+        if key is not None:
+            return key
         raise MfaKeyError(
             "The database contains encrypted MFA secrets but no encryption key is configured. "
             f"Restore the key file {config.MFA_KEY_PATH.name} or set {config.MFA_KEY_ENV}; "

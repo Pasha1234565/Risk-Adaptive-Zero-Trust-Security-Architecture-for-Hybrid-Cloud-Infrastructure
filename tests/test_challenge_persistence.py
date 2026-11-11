@@ -211,7 +211,9 @@ class Worker:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.process.poll() is not None:
-                raise AssertionError(f"worker on {self.port} exited with {self.process.returncode}")
+                self.log.flush()
+                tail = Path(self.log.name).read_bytes().decode("utf-8", "replace")[-1500:]
+                raise AssertionError(f"worker on {self.port} exited with {self.process.returncode}:\n{tail}")
             try:
                 if httpx.get(self.base + "/api/health", timeout=2).status_code == 200:
                     return
