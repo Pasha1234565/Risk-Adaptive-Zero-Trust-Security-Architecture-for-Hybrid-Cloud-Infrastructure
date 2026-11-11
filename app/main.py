@@ -14,16 +14,18 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Path, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import __version__, anomaly, config, database, evaluation, mfa_crypto, risk, security, seed, simulator
 
@@ -80,14 +82,70 @@ templates.env.globals["version"] = __version__
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
+    return _apply_security_headers(response, request.url.path)
+
+
+# ---------------------------------------------------------------------------
+# Error responses
+# ---------------------------------------------------------------------------
+
+# Largest value SQLite can store in an INTEGER column; larger ids would raise
+# OverflowError inside the driver instead of a clean "not found".
+MAX_DB_INT = 2**63 - 1
+DbId = Annotated[int, Field(ge=-MAX_DB_INT, le=MAX_DB_INT)]
+
+
+def _safe_loc_part(part: Any) -> str:
+    # Locations can contain field names chosen by the client (unknown keys),
+    # so they are reduced to a short, inert form before being returned.
+    return re.sub(r"[^A-Za-z0-9_\-]", "_", str(part))[:40]
+
+
+def _error_location(loc: list[str]) -> str:
+    parts = [part for part in loc if part != "body"]
+    return ".".join(parts) or "body"
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """422 with a readable ``detail`` and a list of field errors.
+
+    Pydantic's default body echoes the rejected ``input`` (and ``ctx``); only
+    the location, message and error type are returned here, so a malformed
+    request never reflects its own content back.
+    """
+    errors = []
+    for error in exc.errors():
+        loc = [_safe_loc_part(part) for part in error.get("loc", ())]
+        if error.get("type") == "extra_forbidden" and loc:
+            loc[-1] = "unknown_field"  # the name itself came from the client
+        errors.append({"loc": loc, "msg": str(error.get("msg", "")), "type": str(error.get("type", ""))})
+    first = errors[0] if errors else {"loc": [], "msg": "Invalid request"}
+    summary = f"Invalid request: {_error_location(first['loc'])}: {first['msg']}"
+    return JSONResponse(status_code=422, content={"detail": summary, "errors": errors})
+
+
+def _apply_security_headers(response, path: str):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
     response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
-    if request.url.path.startswith("/api/"):
+    if path.startswith("/api/"):
         response.headers.setdefault("Cache-Control", "no-store")
     return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_error_handler(request: Request, exc: Exception):
+    """Last resort: log the traceback server-side, return a generic 500.
+
+    Starlette runs this handler outside the middleware stack, so the security
+    headers are applied here explicitly.
+    """
+    logger.error("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+    response = JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    return _apply_security_headers(response, request.url.path)
 
 
 # ---------------------------------------------------------------------------
@@ -503,13 +561,55 @@ def topology(request: Request):
 # ---------------------------------------------------------------------------
 
 
+_FINITE = {"allow_inf_nan": False}
+
+
+class AccessContext(BaseModel):
+    """Request context for an evaluation. Every field is optional (defaults in
+    risk.DEFAULT_CONTEXT); unknown fields, wrong types, out-of-range numbers,
+    unknown locations and threat levels are rejected with 422."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    geo: str | None = Field(default=None, max_length=64)
+    hour: int | None = Field(default=None, ge=0, le=23)
+    requests_last_5m: float | None = Field(default=None, ge=0, le=100_000, **_FINITE)
+    failed_attempts_24h: float | None = Field(default=None, ge=0, le=100_000, **_FINITE)
+    bytes_out_mb: float | None = Field(default=None, ge=0, le=10_000_000, **_FINITE)
+    session_minutes: float | None = Field(default=None, ge=0, le=100_000, **_FINITE)
+    concurrent_sessions: float | None = Field(default=None, ge=0, le=10_000, **_FINITE)
+    new_device: bool | None = None
+    mfa_verified: bool | None = None
+    threat_intel: Literal["clean", "suspicious", "malicious"] | None = None
+    source_ip: str | None = Field(default=None, max_length=64)
+    note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("geo")
+    @classmethod
+    def _known_geo(cls, value: str | None) -> str | None:
+        if value is not None and value not in risk.GEO_PRESETS:
+            raise ValueError("Unknown location; use one of the geo_presets from /api/context/inventory")
+        return value
+
+    @field_validator("source_ip")
+    @classmethod
+    def _ip_address(cls, value: str | None) -> str | None:
+        if value:
+            try:
+                ipaddress.ip_address(value)
+            except ValueError as exc:
+                raise ValueError("source_ip must be an IPv4 or IPv6 address") from exc
+        return value
+
+
 class AccessPayload(BaseModel):
     # Subject to evaluate. Omitted means the signed-in user; any other value is
-    # accepted only from simulation roles (see can_simulate).
-    user_id: int | None = None
-    device_id: int
-    resource_id: int
-    context: dict[str, Any] = Field(default_factory=dict)
+    # accepted only from simulation roles (see can_simulate). Unknown top-level
+    # fields are ignored (actor fields in the body must have no effect).
+    user_id: DbId | None = None
+    device_id: DbId
+    resource_id: DbId
+    context: AccessContext = Field(default_factory=AccessContext)
 
 
 class ChallengePayload(BaseModel):
@@ -539,7 +639,7 @@ def evaluate_access(payload: AccessPayload, request: Request):
         raise HTTPException(status_code=403, detail=SIMULATION_FORBIDDEN)
     with database.get_db() as conn:
         subject = database.row(conn, "SELECT email FROM users WHERE id = ?", (subject_id,))
-    context = dict(payload.context)
+    context = payload.context.model_dump(exclude_none=True)
     if subject:
         context.setdefault("failed_attempts_24h", failed_logins_24h(subject["email"]))
     try:
@@ -586,10 +686,14 @@ def complete_challenge(payload: ChallengePayload, request: Request):
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+class PreviewPayload(BaseModel):
+    event_id: int = Field(ge=1, le=MAX_DB_INT)
+
+
 @app.post("/api/access/preview")
-def preview_resource(payload: dict[str, Any], request: Request):
+def preview_resource(payload: PreviewPayload, request: Request):
     user = require_user(request)
-    event_id = int(payload.get("event_id", 0))
+    event_id = payload.event_id
     with database.get_db() as conn:
         event = database.row(
             conn,
@@ -681,11 +785,11 @@ def _resource_records(event: dict, *, masked: bool = False) -> list[dict[str, An
 def list_events(
     request: Request,
     limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-    decision: str | None = None,
-    scenario: str | None = None,
-    truth: str | None = None,
-    user_id: int | None = None,
+    offset: int = Query(0, ge=0, le=MAX_DB_INT),
+    decision: str | None = Query(None, max_length=64),
+    scenario: str | None = Query(None, max_length=64),
+    truth: Literal["all", "attack", "normal"] | None = None,
+    user_id: int | None = Query(None, ge=1, le=MAX_DB_INT),
 ):
     viewer = require_user(request)
     clauses: list[str] = []
@@ -697,6 +801,12 @@ def list_events(
         params.append(viewer["id"])
     if decision and decision != "ALL":
         values = [d.strip().upper() for d in decision.split(",") if d.strip()]
+        if not values or any(value not in config.DECISION_ORDER for value in values):
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid request: decision: use ALL or a comma-separated list of "
+                       + ", ".join(config.DECISION_ORDER),
+            )
         clauses.append(f"e.decision IN ({','.join('?' for _ in values)})")
         params.extend(values)
     if scenario and scenario != "all":
@@ -737,7 +847,7 @@ def list_events(
 
 
 @app.get("/api/events/{event_id}")
-def get_event(event_id: int, request: Request):
+def get_event(request: Request, event_id: int = Path(ge=1, le=MAX_DB_INT)):
     viewer = require_user(request)
     with database.get_db() as conn:
         item = database.row(
@@ -767,7 +877,11 @@ def get_event(event_id: int, request: Request):
 
 
 @app.get("/api/alerts")
-def list_alerts(request: Request, status: str = "open", limit: int = 50):
+def list_alerts(
+    request: Request,
+    status: Literal["open", "acknowledged", "all"] = "open",
+    limit: int = Query(50, ge=1, le=500),
+):
     viewer = require_user(request)
     clauses: list[str] = [] if status == "all" else ["a.status = ?"]
     params: list[Any] = [] if status == "all" else [status]
@@ -798,7 +912,7 @@ def list_alerts(request: Request, status: str = "open", limit: int = 50):
 
 
 @app.post("/api/alerts/{alert_id}/ack")
-def acknowledge_alert(alert_id: int, request: Request):
+def acknowledge_alert(request: Request, alert_id: int = Path(ge=1, le=MAX_DB_INT)):
     user = require_user(request)
     if not can_simulate(user):
         raise HTTPException(status_code=403, detail=TRIAGE_FORBIDDEN)
@@ -948,7 +1062,7 @@ def _safe_json(value: Any, fallback: Any) -> Any:
 
 
 class ScenarioPayload(BaseModel):
-    scenario_id: str
+    scenario_id: str = Field(max_length=64)
     variants: int = Field(default=3, ge=1, le=5)
 
 
@@ -971,6 +1085,9 @@ def list_scenarios(request: Request):
 @app.post("/api/sim/scenario")
 def run_scenario(payload: ScenarioPayload, request: Request):
     operator, session_id = require_simulation_operator(request)
+    if payload.scenario_id not in simulator.SCENARIO_MAP:
+        raise HTTPException(status_code=422, detail="Invalid request: scenario_id: unknown scenario; "
+                                                    "see /api/sim/scenarios")
     try:
         results = simulator.run_scenario(
             payload.scenario_id, variants=payload.variants, persist=True,
@@ -1025,7 +1142,7 @@ def evaluation_runs(request: Request, limit: int = Query(20, ge=1, le=100)):
 
 
 @app.get("/api/evaluation/runs/{run_id}")
-def evaluation_run(run_id: int, request: Request):
+def evaluation_run(request: Request, run_id: int = Path(ge=1, le=MAX_DB_INT)):
     require_user(request)
     metrics = evaluation.get_run(run_id)
     if not metrics:
@@ -1078,18 +1195,24 @@ def admin_inventory(request: Request):
     }
 
 
+class TrainPayload(BaseModel):
+    # Same ranges as the admin console form; values outside them are rejected
+    # (422) instead of being silently clamped.
+    samples: int = Field(default=1200, ge=200, le=5000)
+    contamination: float = Field(default=0.04, ge=0.01, le=0.15, allow_inf_nan=False)
+
+
 @app.post("/api/admin/model/train")
-def train_model(request: Request, payload: dict[str, Any] | None = None):
+def train_model(request: Request, payload: TrainPayload | None = None):
     require_admin(request)
-    payload = payload or {}
-    samples = max(200, min(5000, int(payload.get("samples", 1200))))
-    contamination = max(0.01, min(0.15, float(payload.get("contamination", 0.04))))
-    model = anomaly.retrain(samples=samples, contamination=contamination)
+    payload = payload or TrainPayload()
+    model = anomaly.retrain(samples=payload.samples, contamination=payload.contamination)
     return {"model": model.metadata(), "trained": True}
 
 
 class SettingsPayload(BaseModel):
-    thresholds: dict[str, float]
+    thresholds: dict[Literal["allow_max", "challenge_max", "restrict_max"],
+                     Annotated[float, Field(allow_inf_nan=False)]]
 
 
 @app.put("/api/admin/settings")
@@ -1111,7 +1234,7 @@ def update_settings(payload: SettingsPayload, request: Request):
 
 
 @app.post("/api/admin/policies/{policy_id}/toggle")
-def toggle_policy(policy_id: int, request: Request):
+def toggle_policy(request: Request, policy_id: int = Path(ge=1, le=MAX_DB_INT)):
     require_admin(request)
     with database.get_db() as conn:
         policy = database.row(conn, "SELECT id, enabled FROM policies WHERE id = ?", (policy_id,))
