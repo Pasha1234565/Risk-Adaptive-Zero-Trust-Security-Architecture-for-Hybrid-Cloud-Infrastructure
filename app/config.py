@@ -67,6 +67,12 @@ LOGIN_LOCK_SECONDS = 300
 #   identity until the oldest failure leaves the window, so issuing new
 #   challenges does not reset the guess budget. Nothing locks permanently, and
 #   a successful verification starts a fresh window.
+# Roles allowed to evaluate access on behalf of ANOTHER identity in the access
+# console and to run attack simulations / evaluations. Every other signed-in
+# user can evaluate only their own identity with their own devices. The actor
+# (signed-in user) is recorded separately from the evaluated subject.
+SIMULATION_ROLES = frozenset({"security_admin", "analyst"})
+
 CHALLENGE_TTL_SECONDS = 180
 MFA_MAX_ATTEMPTS_PER_CHALLENGE = env_int("ZT_MFA_MAX_ATTEMPTS", 3)
 MFA_USER_MAX_FAILURES = env_int("ZT_MFA_USER_MAX_FAILURES", 6)

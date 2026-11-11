@@ -134,6 +134,10 @@
       const detail = [
         ["Identity", event.user_name + " · " + event.user_email],
         ["Role", event.user_role],
+        ["Initiated by", event.actor_user_id
+          ? event.actor_name + " · " + event.actor_email +
+            (event.actor_user_id !== event.user_id ? " (simulation)" : "")
+          : "System / not recorded"],
         ["Device", event.device_name + " · trust " + event.device_trust],
         ["Resource", event.resource_name + " · " + event.resource_sensitivity],
         ["Zone", event.resource_zone],

@@ -16,6 +16,11 @@
   </div>
 </div>
 
+{% if not can_simulate %}
+<section class="card" id="simulation-restricted">
+  <p>Running simulations and evaluations requires the security administrator or SOC analyst role. Your account can review scenarios but not run them.</p>
+</section>
+{% endif %}
 <section class="card runner-card">
   <div class="runner">
     <div>

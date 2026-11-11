@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/css/app.css">
   <link rel="icon" href="/static/img/shield.svg" type="image/svg+xml">
 </head>
-<body data-page="{{ active }}" data-demo-totp="{{ 'on' if demo_totp_available else 'off' }}">
+<body data-page="{{ active }}" data-demo-totp="{{ 'on' if demo_totp_available else 'off' }}" data-user-id="{{ user.id }}" data-can-simulate="{{ 'yes' if can_simulate else 'no' }}">
 <div class="app-shell">
   <aside class="sidebar" id="sidebar">
     <div class="brand">

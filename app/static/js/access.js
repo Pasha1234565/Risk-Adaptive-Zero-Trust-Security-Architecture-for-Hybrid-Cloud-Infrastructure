@@ -11,11 +11,19 @@
 
   function populateUsers() {
     const select = document.getElementById("user-select");
-    select.innerHTML = state.inventory.users.map(function (user) {
+    // Only simulation roles may evaluate other identities; the server enforces
+    // this, and the selector simply mirrors it.
+    const canSimulate = document.body.dataset.canSimulate === "yes";
+    const selfId = Number(document.body.dataset.userId);
+    const users = canSimulate
+      ? state.inventory.users
+      : state.inventory.users.filter(function (user) { return user.id === selfId; });
+    select.innerHTML = users.map(function (user) {
       return option(user.id, user.name + " · " + user.role.replace(/_/g, " "));
     }).join("");
-    const analyst = state.inventory.users.find(function (user) { return user.role === "analyst"; });
-    select.value = String((analyst || state.inventory.users[0]).id);
+    const analyst = users.find(function (user) { return user.role === "analyst"; });
+    select.value = String((analyst || users[0]).id);
+    select.disabled = !canSimulate;
     select.addEventListener("change", function () {
       populateDevices();
       updateHints();

@@ -255,7 +255,14 @@ def evaluate(
     scenario: str = "live",
     action: str = "access",
     timestamp: str | None = None,
+    actor_id: int | None = None,
 ) -> dict[str, Any]:
+    """Evaluate an access request for subject ``user_id``.
+
+    ``actor_id`` is the signed-in user who initiated the request (None for
+    system-generated traffic). Authorisation to act for another subject is
+    enforced by the caller (the API layer); the engine records the actor.
+    """
     started = time.perf_counter()
     with database.get_db() as conn:
         user = database.row(conn, "SELECT * FROM users WHERE id = ?", (user_id,))
@@ -397,9 +404,10 @@ def evaluate(
             "ts": timestamp or database.utcnow(),
         }
 
+        result["actor_user_id"] = actor_id
         if persist:
             event_id = _persist_event(
-                conn, user, device, resource, result, ground_truth, scenario, action
+                conn, user, device, resource, result, ground_truth, scenario, action, actor_id
             )
             result["event_id"] = event_id
             if decision in ("RESTRICT", "BLOCK"):
@@ -562,13 +570,14 @@ def verify_challenge(token: str, code: str, *, actor_id: int | None = None) -> d
     return re_evaluated
 
 
-def _persist_event(conn, user, device, resource, result, ground_truth, scenario, action) -> int:
+def _persist_event(conn, user, device, resource, result, ground_truth, scenario, action,
+                   actor_id: int | None = None) -> int:
     cursor = conn.execute(
         """INSERT INTO events
            (ts, user_id, device_id, resource_id, action, decision, risk_score,
             anomaly_score, base_risk, signals, reasons, context, source_ip, geo,
-            latency_ms, ground_truth, scenario, outcome)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            latency_ms, ground_truth, scenario, outcome, actor_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             result["ts"],
             user["id"],
@@ -588,6 +597,7 @@ def _persist_event(conn, user, device, resource, result, ground_truth, scenario,
             int(ground_truth),
             scenario,
             "evaluated",
+            actor_id,
         ),
     )
     return int(cursor.lastrowid)

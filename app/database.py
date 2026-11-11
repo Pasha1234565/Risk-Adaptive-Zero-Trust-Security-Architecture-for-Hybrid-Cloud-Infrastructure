@@ -87,7 +87,10 @@ CREATE TABLE IF NOT EXISTS events (
     latency_ms     REAL NOT NULL DEFAULT 0,
     ground_truth   INTEGER NOT NULL DEFAULT 0,
     scenario       TEXT NOT NULL DEFAULT 'live',
-    outcome        TEXT NOT NULL DEFAULT 'evaluated'
+    outcome        TEXT NOT NULL DEFAULT 'evaluated',
+    -- Signed-in user who initiated the evaluation (NULL for system-generated
+    -- traffic and for events recorded before this column existed).
+    actor_user_id  INTEGER REFERENCES users(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts DESC);
@@ -164,10 +167,31 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def init_db() -> None:
+# Additive column migrations for databases created before a column existed.
+# Each entry is applied only when the column is missing; existing rows keep
+# their data and get NULL in the new column.
+COLUMN_MIGRATIONS = [
+    ("events", "actor_user_id", "INTEGER REFERENCES users(id)"),
+]
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> list[str]:
+    applied = []
+    for table, column, ddl in COLUMN_MIGRATIONS:
+        present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in present:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            applied.append(f"{table}.{column}")
+    return applied
+
+
+def init_db() -> list[str]:
+    """Create missing tables and apply additive migrations; returns the
+    migrations applied (empty when the schema was already current)."""
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
         conn.executescript(SCHEMA)
+        return _migrate_columns(conn)
 
 
 @contextmanager

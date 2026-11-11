@@ -175,6 +175,24 @@ def require_admin(request: Request) -> dict[str, Any]:
     return user
 
 
+SIMULATION_FORBIDDEN = (
+    "Acting for another identity or running simulations requires the security "
+    "administrator or SOC analyst role."
+)
+
+
+def can_simulate(user: dict[str, Any]) -> bool:
+    """Server-side rule for evaluating on behalf of other identities."""
+    return bool(user["is_admin"]) or user["role"] in config.SIMULATION_ROLES
+
+
+def require_simulation_operator(request: Request) -> dict[str, Any]:
+    user = require_user(request)
+    if not can_simulate(user):
+        raise HTTPException(status_code=403, detail=SIMULATION_FORBIDDEN)
+    return user
+
+
 def _page(request: Request, template: str, context: dict[str, Any] | None = None):
     user = current_user(request)
     if not user:
@@ -186,6 +204,7 @@ def _page(request: Request, template: str, context: dict[str, Any] | None = None
         "version": __version__,
         "active": template.replace(".html", ""),
         "demo_totp_available": demo_totp_available(request),
+        "can_simulate": can_simulate(user),
     }
     payload.update(context or {})
     return templates.TemplateResponse(request, template, payload)
@@ -406,7 +425,9 @@ def topology(request: Request):
 
 
 class AccessPayload(BaseModel):
-    user_id: int
+    # Subject to evaluate. Omitted means the signed-in user; any other value is
+    # accepted only from simulation roles (see can_simulate).
+    user_id: int | None = None
     device_id: int
     resource_id: int
     context: dict[str, Any] = Field(default_factory=dict)
@@ -419,24 +440,34 @@ class ChallengePayload(BaseModel):
 
 @app.post("/api/access/evaluate")
 def evaluate_access(payload: AccessPayload, request: Request):
-    require_user(request)
+    # The actor always comes from the authenticated session. The evaluated
+    # subject defaults to the actor; a different subject is a simulation and
+    # needs a simulation role, enforced here rather than in the browser.
+    actor = require_user(request)
+    subject_id = actor["id"] if payload.user_id is None else payload.user_id
+    simulated = subject_id != actor["id"]
+    if simulated and not can_simulate(actor):
+        raise HTTPException(status_code=403, detail=SIMULATION_FORBIDDEN)
     with database.get_db() as conn:
-        user = database.row(conn, "SELECT email FROM users WHERE id = ?", (payload.user_id,))
+        subject = database.row(conn, "SELECT email FROM users WHERE id = ?", (subject_id,))
     context = dict(payload.context)
-    if user:
-        context.setdefault("failed_attempts_24h", failed_logins_24h(user["email"]))
+    if subject:
+        context.setdefault("failed_attempts_24h", failed_logins_24h(subject["email"]))
     try:
         result = risk.evaluate(
-            payload.user_id,
+            subject_id,
             payload.device_id,
             payload.resource_id,
             context,
             persist=True,
             ground_truth=0,
             scenario="live",
+            actor_id=actor["id"],
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result["actor"] = {"id": actor["id"], "name": actor["name"], "role": actor["role"]}
+    result["simulated"] = simulated
     return result
 
 
@@ -576,10 +607,12 @@ def list_events(
         rows = database.rows(
             conn,
             f"""SELECT e.*, u.name AS user_name, u.email AS user_email, u.role AS user_role,
+                       a.name AS actor_name, a.email AS actor_email,
                        d.name AS device_name, r.name AS resource_name, r.zone AS resource_zone,
                        r.sensitivity AS resource_sensitivity, r.category AS resource_category
                 FROM events e
                 LEFT JOIN users u ON u.id = e.user_id
+                LEFT JOIN users a ON a.id = e.actor_user_id
                 LEFT JOIN devices d ON d.id = e.device_id
                 LEFT JOIN resources r ON r.id = e.resource_id
                 {where}
@@ -601,11 +634,13 @@ def get_event(event_id: int, request: Request):
         item = database.row(
             conn,
             """SELECT e.*, u.name AS user_name, u.email AS user_email, u.role AS user_role,
+                      a.name AS actor_name, a.email AS actor_email,
                       d.name AS device_name, d.trust_score AS device_trust,
                       r.name AS resource_name, r.zone AS resource_zone,
                       r.sensitivity AS resource_sensitivity, r.category AS resource_category
                FROM events e
                LEFT JOIN users u ON u.id = e.user_id
+               LEFT JOIN users a ON a.id = e.actor_user_id
                LEFT JOIN devices d ON d.id = e.device_id
                LEFT JOIN resources r ON r.id = e.resource_id
                WHERE e.id = ?""",
@@ -792,9 +827,11 @@ def list_scenarios(request: Request):
 
 @app.post("/api/sim/scenario")
 def run_scenario(payload: ScenarioPayload, request: Request):
-    require_user(request)
+    operator = require_simulation_operator(request)
     try:
-        results = simulator.run_scenario(payload.scenario_id, variants=payload.variants, persist=True)
+        results = simulator.run_scenario(
+            payload.scenario_id, variants=payload.variants, persist=True, actor_id=operator["id"]
+        )
     except (ValueError, StopIteration) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
@@ -806,14 +843,14 @@ def run_scenario(payload: ScenarioPayload, request: Request):
 
 @app.post("/api/sim/normal")
 def run_normal(payload: NormalPayload, request: Request):
-    require_user(request)
-    results = simulator.run_normal(payload.count, persist=True, seed=None)
+    operator = require_simulation_operator(request)
+    results = simulator.run_normal(payload.count, persist=True, seed=None, actor_id=operator["id"])
     return {"results": results, "summary": _summarise_results(results)}
 
 
 @app.post("/api/sim/evaluation")
 def run_evaluation(payload: EvaluationPayload, request: Request):
-    require_user(request)
+    require_simulation_operator(request)
     metrics = evaluation.run_evaluation(
         payload.name, normal_samples=payload.normal_samples, variants=payload.variants
     )
