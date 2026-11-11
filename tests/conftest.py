@@ -28,7 +28,10 @@ ADMIN = ("admin@hybridcloud.io", "Admin#2026")
 ANALYST = ("analyst@hybridcloud.io", "Analyst#2026")
 
 
-@pytest.fixture(scope="session")
+# autouse: the application lifespan seeds the demo inventory, trains the model
+# and creates the schema. Engine-level tests that never request ``client`` still
+# need that state, so start the app once per session regardless of test order.
+@pytest.fixture(scope="session", autouse=True)
 def client():
     with TestClient(app) as test_client:
         yield test_client
@@ -36,3 +39,24 @@ def client():
 
 def login(client: TestClient, email: str, password: str):
     return client.post("/api/auth/login", json={"email": email, "password": password})
+
+
+@pytest.fixture
+def make_client(client):
+    """Factory for independent clients (own cookie jar) on the started app.
+
+    Depends on ``client`` so the lifespan has already run; extra keyword
+    arguments are passed to ``TestClient`` (for example ``client=`` to set the
+    simulated peer address).
+    """
+    created: list[TestClient] = []
+
+    def factory(**kwargs) -> TestClient:
+        kwargs.setdefault("follow_redirects", False)
+        instance = TestClient(app, **kwargs)
+        created.append(instance)
+        return instance
+
+    yield factory
+    for instance in created:
+        instance.close()
