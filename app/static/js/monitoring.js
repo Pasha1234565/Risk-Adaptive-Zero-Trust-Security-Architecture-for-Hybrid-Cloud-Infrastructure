@@ -3,6 +3,9 @@
   "use strict";
 
   const state = { limit: 25, offset: 0, total: 0, events: [], filtersLoaded: false };
+  // Alert triage is limited to SOC roles; the server enforces it (403) and the
+  // page only hides the control from other roles.
+  const canTriage = document.body.dataset.canSimulate === "yes";
 
   function filters() {
     return {
@@ -109,7 +112,9 @@
               '<span class="alert-meta"><span>' + window.ZT.escape(alert.user_name || "Unknown") + "</span>" +
                 "<span>" + window.ZT.timeAgo(alert.ts) + "</span></span>" +
             "</span>" +
-            '<span class="alert-actions"><button class="btn btn-ghost small" data-ack="' + alert.id + '">Ack</button></span>' +
+            (canTriage
+              ? '<span class="alert-actions"><button class="btn btn-ghost small" data-ack="' + alert.id + '">Ack</button></span>'
+              : "") +
           "</div>"
         );
       }).join("");
@@ -216,7 +221,7 @@
       const users = results[0].users;
       const scenarios = results[1].scenarios;
       document.getElementById("filter-user").innerHTML =
-        '<option value="">All identities</option>' +
+        '<option value="">' + (results[0].scope === "self" ? "My identity" : "All identities") + "</option>" +
         users.map(function (user) {
           return '<option value="' + user.id + '">' + window.ZT.escape(user.name) + "</option>";
         }).join("");

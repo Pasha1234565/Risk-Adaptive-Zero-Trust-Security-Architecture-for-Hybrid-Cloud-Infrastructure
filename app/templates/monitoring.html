@@ -7,6 +7,9 @@
     <p class="eyebrow">Continuous monitoring</p>
     <h1>Security event log</h1>
     <p class="lede">Every decision, its signal breakdown and the policies that shaped it. Restricted and blocked requests raise alerts for triage.</p>
+    {% if not can_simulate %}
+    <p class="lede" id="scope-note">Showing access decisions and alerts for your own identity only. Security operations roles see every identity.</p>
+    {% endif %}
   </div>
   <div class="head-actions">
     <button class="btn btn-ghost" id="export-csv">

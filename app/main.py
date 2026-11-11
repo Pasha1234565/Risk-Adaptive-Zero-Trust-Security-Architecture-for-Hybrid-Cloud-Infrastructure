@@ -209,6 +209,26 @@ def can_simulate(user: dict[str, Any]) -> bool:
     return bool(user["is_admin"]) or user["role"] in config.SIMULATION_ROLES
 
 
+def inventory_scope(user: dict[str, Any]) -> str:
+    """Visibility of identities, devices, events and alerts for ``user``.
+
+    ``full`` for security administrators, ``soc`` for SOC analysts (both see
+    every identity's records), ``self`` for every other role.
+    """
+    if user["is_admin"] or user["role"] == "security_admin":
+        return "full"
+    if can_simulate(user):
+        return "soc"
+    return "self"
+
+
+def _own_records_only(user: dict[str, Any]) -> bool:
+    return inventory_scope(user) == "self"
+
+
+TRIAGE_FORBIDDEN = "Alert triage requires the security administrator or SOC analyst role."
+
+
 def require_simulation_operator(request: Request) -> tuple[dict[str, Any], str]:
     user, session_id = require_principal(request)
     if not can_simulate(user):
@@ -395,28 +415,58 @@ def current_totp(request: Request):
 # ---------------------------------------------------------------------------
 
 
+def _permitted_resources(role: str, resources: list[dict], policies: list[dict]) -> list[dict]:
+    """Resources whose enabled role-restricting policies admit ``role`` (the
+    same rule the PDP applies as its least-privilege check)."""
+    permitted = []
+    for resource in resources:
+        requirements = risk._policy_requirements(policies, resource)
+        if not requirements["role_restricted"] or role in requirements["allowed_roles"]:
+            permitted.append(resource)
+    return permitted
+
+
 @app.get("/api/context/inventory")
 def inventory(request: Request):
-    require_user(request)
+    """Identities, devices and resources for the access console, scoped by role.
+
+    * full (security administrators) and soc (SOC analysts): every identity
+      and device, because they triage events and run simulations for other
+      identities, and every resource. Administrative records (policies,
+      account flags, timestamps) stay in the admin-only /api/admin/inventory.
+    * self (every other role, including service accounts): the caller's own
+      identity and devices, and only the resources its role is permitted by
+      policy. Service identities appear in no role-restricted policy, so they
+      get the smallest set.
+
+    Password hashes, MFA secrets, device fingerprints and session data are
+    never selected.
+    """
+    user = require_user(request)
+    scope = inventory_scope(user)
     with database.get_db() as conn:
-        users = database.rows(
-            conn,
-            "SELECT id, name, email, role, department, status, mfa_enabled FROM users ORDER BY id",
-        )
-        devices = database.rows(
-            conn,
-            "SELECT id, user_id, name, kind, os, managed, compliant, trust_score FROM devices ORDER BY id",
-        )
+        user_sql = "SELECT id, name, email, role, department, status, mfa_enabled FROM users"
+        device_sql = "SELECT id, user_id, name, kind, os, managed, compliant, trust_score FROM devices"
+        if scope == "self":
+            users = database.rows(conn, user_sql + " WHERE id = ?", (user["id"],))
+            devices = database.rows(conn, device_sql + " WHERE user_id = ? ORDER BY id", (user["id"],))
+        else:
+            users = database.rows(conn, user_sql + " ORDER BY id")
+            devices = database.rows(conn, device_sql + " ORDER BY id")
         resources = database.rows(
             conn, "SELECT id, name, zone, service, category, sensitivity, owner, description FROM resources ORDER BY zone, name"
         )
+        if scope == "self":
+            policies = database.rows(conn, "SELECT * FROM policies ORDER BY id")
+            resources = _permitted_resources(user["role"], resources, policies)
     for device in devices:
         device["managed"] = bool(device["managed"])
         device["compliant"] = bool(device["compliant"])
-    for user in users:
-        user["mfa_enabled"] = bool(user["mfa_enabled"])
-        user["devices"] = [d for d in devices if d["user_id"] == user["id"]]
+    for item in users:
+        item["mfa_enabled"] = bool(item["mfa_enabled"])
+        item["devices"] = [d for d in devices if d["user_id"] == item["id"]]
     return {
+        "scope": scope,
         "users": users,
         "resources": resources,
         "geo_presets": list(risk.GEO_PRESETS.keys()),
@@ -617,9 +667,14 @@ def list_events(
     truth: str | None = None,
     user_id: int | None = None,
 ):
-    require_user(request)
+    viewer = require_user(request)
     clauses: list[str] = []
     params: list[Any] = []
+    # Non-SOC roles see only decisions about their own identity (including
+    # simulations an operator ran against it).
+    if _own_records_only(viewer):
+        clauses.append("e.user_id = ?")
+        params.append(viewer["id"])
     if decision and decision != "ALL":
         values = [d.strip().upper() for d in decision.split(",") if d.strip()]
         clauses.append(f"e.decision IN ({','.join('?' for _ in values)})")
@@ -662,7 +717,7 @@ def list_events(
 
 @app.get("/api/events/{event_id}")
 def get_event(event_id: int, request: Request):
-    require_user(request)
+    viewer = require_user(request)
     with database.get_db() as conn:
         item = database.row(
             conn,
@@ -679,7 +734,9 @@ def get_event(event_id: int, request: Request):
                WHERE e.id = ?""",
             (event_id,),
         )
-    if not item:
+    # Another identity's event is reported exactly like a missing one, so ids
+    # cannot be used to probe other users' activity.
+    if not item or (_own_records_only(viewer) and item["user_id"] != viewer["id"]):
         raise HTTPException(status_code=404, detail="Event not found")
     for key in ("signals", "reasons", "context"):
         item[key] = _safe_json(item[key], [] if key != "context" else {})
@@ -689,9 +746,14 @@ def get_event(event_id: int, request: Request):
 
 @app.get("/api/alerts")
 def list_alerts(request: Request, status: str = "open", limit: int = 50):
-    require_user(request)
-    where = "" if status == "all" else "WHERE a.status = ?"
+    viewer = require_user(request)
+    clauses: list[str] = [] if status == "all" else ["a.status = ?"]
     params: list[Any] = [] if status == "all" else [status]
+    own_only = _own_records_only(viewer)
+    if own_only:
+        clauses.append("e.user_id = ?")
+        params.append(viewer["id"])
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with database.get_db() as conn:
         alerts = database.rows(
             conn,
@@ -706,14 +768,18 @@ def list_alerts(request: Request, status: str = "open", limit: int = 50):
             params + [limit],
         )
         open_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM alerts WHERE status = 'open'"
+            "SELECT COUNT(*) AS n FROM alerts a LEFT JOIN events e ON e.id = a.event_id "
+            "WHERE a.status = 'open'" + (" AND e.user_id = ?" if own_only else ""),
+            [viewer["id"]] if own_only else [],
         ).fetchone()["n"]
-    return {"alerts": alerts, "open_count": open_count}
+    return {"alerts": alerts, "open_count": open_count, "scope": "self" if own_only else "all"}
 
 
 @app.post("/api/alerts/{alert_id}/ack")
 def acknowledge_alert(alert_id: int, request: Request):
-    require_user(request)
+    user = require_user(request)
+    if not can_simulate(user):
+        raise HTTPException(status_code=403, detail=TRIAGE_FORBIDDEN)
     with database.get_db() as conn:
         found = conn.execute("SELECT id FROM alerts WHERE id = ?", (alert_id,)).fetchone()
         if not found:
@@ -729,54 +795,65 @@ def acknowledge_alert(alert_id: int, request: Request):
 
 @app.get("/api/dashboard")
 def dashboard(request: Request):
-    require_user(request)
+    viewer = require_user(request)
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat(timespec="seconds")
+    # Non-SOC roles get the same panels computed over their own events only.
+    own_only = _own_records_only(viewer)
+    mine = " AND user_id = ?" if own_only else ""
+    mine_e = " AND e.user_id = ?" if own_only else ""
+    me_param: list[Any] = [viewer["id"]] if own_only else []
     with database.get_db() as conn:
         stats = database.row(
             conn,
-            """SELECT COUNT(*) AS total,
+            f"""SELECT COUNT(*) AS total,
                       SUM(CASE WHEN decision = 'ALLOW' THEN 1 ELSE 0 END) AS allowed,
                       SUM(CASE WHEN decision = 'CHALLENGE' THEN 1 ELSE 0 END) AS challenged,
                       SUM(CASE WHEN decision = 'RESTRICT' THEN 1 ELSE 0 END) AS restricted,
                       SUM(CASE WHEN decision = 'BLOCK' THEN 1 ELSE 0 END) AS blocked,
                       AVG(risk_score) AS avg_risk,
                       AVG(latency_ms) AS avg_latency
-               FROM events WHERE ts >= ?""",
-            (cutoff,),
+               FROM events WHERE ts >= ?{mine}""",
+            [cutoff] + me_param,
         )
-        totals = database.row(conn, "SELECT COUNT(*) AS total FROM events")
+        totals = database.row(conn, f"SELECT COUNT(*) AS total FROM events WHERE 1 = 1{mine}", me_param)
         open_alerts = conn.execute(
-            "SELECT COUNT(*) AS n FROM alerts WHERE status = 'open'"
+            f"SELECT COUNT(*) AS n FROM alerts a LEFT JOIN events e ON e.id = a.event_id "
+            f"WHERE a.status = 'open'{mine_e}",
+            me_param,
         ).fetchone()["n"]
         risk_rows = database.rows(
             conn,
-            "SELECT risk_score FROM events WHERE ts >= ? ORDER BY id DESC LIMIT 1000",
-            (cutoff,),
+            f"SELECT risk_score FROM events WHERE ts >= ?{mine} ORDER BY id DESC LIMIT 1000",
+            [cutoff] + me_param,
         )
         recent = database.rows(
             conn,
-            """SELECT e.id, e.ts, e.decision, e.risk_score, e.anomaly_score, e.scenario,
+            f"""SELECT e.id, e.ts, e.decision, e.risk_score, e.anomaly_score, e.scenario,
                       e.ground_truth, u.name AS user_name, r.name AS resource_name,
                       r.zone AS resource_zone, d.name AS device_name
                FROM events e LEFT JOIN users u ON u.id = e.user_id
                LEFT JOIN resources r ON r.id = e.resource_id
                LEFT JOIN devices d ON d.id = e.device_id
+               WHERE 1 = 1{mine_e}
                ORDER BY e.ts DESC, e.id DESC LIMIT 8""",
+            me_param,
         )
         alerts = database.rows(
             conn,
-            """SELECT a.id, a.ts, a.severity, a.title, a.detail, a.status
-               FROM alerts a WHERE a.status = 'open' ORDER BY a.ts DESC LIMIT 5""",
+            f"""SELECT a.id, a.ts, a.severity, a.title, a.detail, a.status
+               FROM alerts a LEFT JOIN events e ON e.id = a.event_id
+               WHERE a.status = 'open'{mine_e} ORDER BY a.ts DESC LIMIT 5""",
+            me_param,
         )
         latest_eval = conn.execute(
             "SELECT id, ts, metrics FROM eval_runs ORDER BY id DESC LIMIT 1"
         ).fetchone()
         events_by_hour = database.rows(
             conn,
-            """SELECT substr(ts, 12, 2) AS hour, COUNT(*) AS n,
+            f"""SELECT substr(ts, 12, 2) AS hour, COUNT(*) AS n,
                       SUM(CASE WHEN decision != 'ALLOW' THEN 1 ELSE 0 END) AS elevated
-               FROM events WHERE ts >= ? GROUP BY substr(ts, 12, 2) ORDER BY hour""",
-            (cutoff,),
+               FROM events WHERE ts >= ?{mine} GROUP BY substr(ts, 12, 2) ORDER BY hour""",
+            [cutoff] + me_param,
         )
     bins = [0, 0, 0, 0, 0]
     for row in risk_rows:
@@ -789,6 +866,7 @@ def dashboard(request: Request):
         except json.JSONDecodeError:
             detection = {}
     return {
+        "scope": "self" if own_only else "all",
         "stats": {
             "events_24h": stats["total"] or 0,
             "events_total": totals["total"] or 0,
