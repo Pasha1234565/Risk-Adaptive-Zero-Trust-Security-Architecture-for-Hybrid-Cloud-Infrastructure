@@ -256,12 +256,14 @@ def evaluate(
     action: str = "access",
     timestamp: str | None = None,
     actor_id: int | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate an access request for subject ``user_id``.
 
     ``actor_id`` is the signed-in user who initiated the request (None for
-    system-generated traffic). Authorisation to act for another subject is
-    enforced by the caller (the API layer); the engine records the actor.
+    system-generated traffic) and ``session_id`` that user's session. A
+    resulting step-up challenge is bound to both. Authorisation to act for
+    another subject is enforced by the caller (the API layer).
     """
     started = time.perf_counter()
     with database.get_db() as conn:
@@ -415,7 +417,9 @@ def evaluate(
 
         result["challenge"] = None
         if persist and decision == "CHALLENGE":
-            result["challenge"] = _issue_challenge(result["event_id"], user["id"])
+            result["challenge"] = _issue_challenge(
+                result["event_id"], user["id"], device["id"], resource["id"], actor_id, session_id
+            )
 
     return result
 
@@ -450,7 +454,20 @@ def _purge_expired_challenges(now: float) -> None:
         CHALLENGES.pop(token, None)
 
 
-def _issue_challenge(event_id: int, user_id: int) -> dict[str, Any]:
+def _issue_challenge(
+    event_id: int,
+    user_id: int,
+    device_id: int,
+    resource_id: int,
+    actor_id: int | None,
+    session_id: str | None,
+) -> dict[str, Any]:
+    """Create a single-use challenge bound to the original request.
+
+    ``user_id`` is the subject whose TOTP must be presented; ``actor_id`` and
+    ``session_id`` identify who may answer it. The binding lives only on the
+    server, so nothing sent by the browser can change it.
+    """
     token = secrets.token_urlsafe(24)
     now = time.time()
     with _CHALLENGE_LOCK:
@@ -458,6 +475,10 @@ def _issue_challenge(event_id: int, user_id: int) -> dict[str, Any]:
         CHALLENGES[token] = {
             "event_id": event_id,
             "user_id": user_id,
+            "device_id": device_id,
+            "resource_id": resource_id,
+            "actor_id": actor_id,
+            "session_id": session_id,
             "expires": now + config.CHALLENGE_TTL_SECONDS,
             "used": False,
             "failed_attempts": 0,
@@ -482,13 +503,24 @@ def _identity_retry_after(oldest_failure: str | None) -> int:
     return max(1, int(config.MFA_USER_FAILURE_WINDOW_SECONDS - elapsed) + 1)
 
 
-def verify_challenge(token: str, code: str, *, actor_id: int | None = None) -> dict[str, Any]:
+def verify_challenge(
+    token: str,
+    code: str,
+    *,
+    actor_id: int | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
     """Complete a step-up challenge with a TOTP code and re-evaluate the request.
 
-    Raises ChallengeError (400) for unknown, expired, used or cancelled
-    challenges and for incorrect codes, and ChallengeLimitError (429) when
-    the challenge or the identity has run out of attempts. ``actor_id`` is the
-    signed-in user submitting the code, recorded with each attempt.
+    ``actor_id`` and ``session_id`` are the signed-in user and session
+    submitting the code; they must equal the values the challenge was issued
+    to (the API always supplies both, from the session). A mismatch is
+    answered exactly like an unknown challenge and does not use up the
+    owner's attempts.
+
+    Raises ChallengeError (400) for unknown, expired, used, cancelled or
+    foreign challenges and for incorrect codes, and ChallengeLimitError (429)
+    when the challenge or the identity has run out of attempts.
     """
     from .security import consume_totp
 
@@ -498,10 +530,18 @@ def verify_challenge(token: str, code: str, *, actor_id: int | None = None) -> d
             if entry is not None:
                 CHALLENGES.pop(token, None)
             raise ChallengeError(INVALID_CHALLENGE)
+        if entry["actor_id"] != actor_id or entry["session_id"] != session_id:
+            raise ChallengeError(INVALID_CHALLENGE)
         with database.get_db() as conn:
             user = database.row(conn, "SELECT * FROM users WHERE id = ?", (entry["user_id"],))
             event = database.row(conn, "SELECT * FROM events WHERE id = ?", (entry["event_id"],))
-        if not user or not event:
+        # The stored request must still be the one the challenge was issued for.
+        if (
+            not user
+            or not event
+            or (event["user_id"], event["device_id"], event["resource_id"])
+            != (entry["user_id"], entry["device_id"], entry["resource_id"])
+        ):
             CHALLENGES.pop(token, None)
             raise ChallengeError(INVALID_CHALLENGE)
 

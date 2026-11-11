@@ -216,9 +216,11 @@ def test_successful_verification_starts_a_new_window():
 
 def test_attempt_records_hold_no_codes():
     user = _finance()
-    token = _new_challenge(user)
+    # A challenge owned by a signed-in actor and session, as the API creates it.
+    token = risk.evaluate(*_ids(user), dict(CONTEXT), persist=True, actor_id=user["id"],
+                          session_id="session-under-test")["challenge"]["id"]
     with pytest.raises(risk.ChallengeError):
-        risk.verify_challenge(token, _wrong(user), actor_id=user["id"])
+        risk.verify_challenge(token, _wrong(user), actor_id=user["id"], session_id="session-under-test")
 
     with database.get_db() as conn:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(mfa_attempts)")]

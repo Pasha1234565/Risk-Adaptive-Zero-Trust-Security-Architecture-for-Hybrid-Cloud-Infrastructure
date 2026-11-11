@@ -136,13 +136,36 @@ def demo_totp_available(request: Request) -> bool:
     return config.DEMO_TOTP_ENABLED and is_local_request(request)
 
 
-def current_user(request: Request) -> dict[str, Any] | None:
+def current_principal(request: Request) -> tuple[dict[str, Any], str] | None:
+    """Return ``(user, session_id)`` for a valid session, else None.
+
+    The session id is the token's ``jti``. It stays server-side (it is never
+    added to the user dict returned by APIs) and is used to bind step-up
+    challenges to the session that requested them.
+    """
     token = _request_token(request)
     if not token:
         return None
     payload = security.verify_session_token(token)
     if not payload:
         return None
+    user = _active_user(payload)
+    return (user, payload["jti"]) if user else None
+
+
+def current_user(request: Request) -> dict[str, Any] | None:
+    principal = current_principal(request)
+    return principal[0] if principal else None
+
+
+def require_principal(request: Request) -> tuple[dict[str, Any], str]:
+    principal = current_principal(request)
+    if not principal:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return principal
+
+
+def _active_user(payload: dict[str, Any]) -> dict[str, Any] | None:
     try:
         user_id = int(payload.get("sub", 0))
     except (TypeError, ValueError):
@@ -186,11 +209,11 @@ def can_simulate(user: dict[str, Any]) -> bool:
     return bool(user["is_admin"]) or user["role"] in config.SIMULATION_ROLES
 
 
-def require_simulation_operator(request: Request) -> dict[str, Any]:
-    user = require_user(request)
+def require_simulation_operator(request: Request) -> tuple[dict[str, Any], str]:
+    user, session_id = require_principal(request)
     if not can_simulate(user):
         raise HTTPException(status_code=403, detail=SIMULATION_FORBIDDEN)
-    return user
+    return user, session_id
 
 
 def _page(request: Request, template: str, context: dict[str, Any] | None = None):
@@ -443,7 +466,7 @@ def evaluate_access(payload: AccessPayload, request: Request):
     # The actor always comes from the authenticated session. The evaluated
     # subject defaults to the actor; a different subject is a simulation and
     # needs a simulation role, enforced here rather than in the browser.
-    actor = require_user(request)
+    actor, session_id = require_principal(request)
     subject_id = actor["id"] if payload.user_id is None else payload.user_id
     simulated = subject_id != actor["id"]
     if simulated and not can_simulate(actor):
@@ -463,6 +486,7 @@ def evaluate_access(payload: AccessPayload, request: Request):
             ground_truth=0,
             scenario="live",
             actor_id=actor["id"],
+            session_id=session_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -473,9 +497,13 @@ def evaluate_access(payload: AccessPayload, request: Request):
 
 @app.post("/api/access/challenge")
 def complete_challenge(payload: ChallengePayload, request: Request):
-    user = require_user(request)
+    # Ownership comes from the authenticated session, never from the request
+    # body: only the user and session that triggered the challenge may answer it.
+    user, session_id = require_principal(request)
     try:
-        return risk.verify_challenge(payload.challenge_id, payload.code, actor_id=user["id"])
+        return risk.verify_challenge(
+            payload.challenge_id, payload.code, actor_id=user["id"], session_id=session_id
+        )
     except risk.ChallengeLimitError as exc:
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
         raise HTTPException(status_code=exc.status_code, detail=str(exc), headers=headers) from exc
@@ -827,10 +855,11 @@ def list_scenarios(request: Request):
 
 @app.post("/api/sim/scenario")
 def run_scenario(payload: ScenarioPayload, request: Request):
-    operator = require_simulation_operator(request)
+    operator, session_id = require_simulation_operator(request)
     try:
         results = simulator.run_scenario(
-            payload.scenario_id, variants=payload.variants, persist=True, actor_id=operator["id"]
+            payload.scenario_id, variants=payload.variants, persist=True,
+            actor_id=operator["id"], session_id=session_id,
         )
     except (ValueError, StopIteration) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -843,8 +872,10 @@ def run_scenario(payload: ScenarioPayload, request: Request):
 
 @app.post("/api/sim/normal")
 def run_normal(payload: NormalPayload, request: Request):
-    operator = require_simulation_operator(request)
-    results = simulator.run_normal(payload.count, persist=True, seed=None, actor_id=operator["id"])
+    operator, session_id = require_simulation_operator(request)
+    results = simulator.run_normal(
+        payload.count, persist=True, seed=None, actor_id=operator["id"], session_id=session_id
+    )
     return {"results": results, "summary": _summarise_results(results)}
 
 

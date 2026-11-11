@@ -326,6 +326,7 @@ def run_scenario(
     variants: int = 3,
     persist: bool = True,
     actor_id: int | None = None,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     scenario = SCENARIO_MAP.get(scenario_id)
     if not scenario:
@@ -357,6 +358,7 @@ def run_scenario(
             ground_truth=1,
             scenario=scenario_id,
             actor_id=actor_id,
+            session_id=session_id,
         )
         result["scenario_name"] = scenario["name"]
         result["technique"] = scenario["technique"]
@@ -437,6 +439,7 @@ def run_normal(
     seed: int | None = None,
     spread_hours: float = 0.0,
     actor_id: int | None = None,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     users, resources, devices = _inventory()
     interactive = [u for u in users.values() if u["role"] != "service"]
@@ -465,6 +468,7 @@ def run_normal(
             scenario="normal",
             timestamp=timestamp,
             actor_id=actor_id,
+            session_id=session_id,
         )
         results.append(result)
     return results
