@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/css/app.css">
   <link rel="icon" href="/static/img/shield.svg" type="image/svg+xml">
 </head>
-<body data-page="{{ active }}">
+<body data-page="{{ active }}" data-demo-totp="{{ 'on' if demo_totp_available else 'off' }}">
 <div class="app-shell">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
@@ -77,6 +77,9 @@
         <strong>{{ section }}</strong>
       </div>
       <div class="top-actions">
+        {% if demo_totp_available %}
+        <span class="demo-mode-pill" id="demo-totp-pill" title="ZT_ENABLE_DEMO_TOTP is on. The access console can reveal step-up codes on this machine. Never enable this in a real deployment.">Demo MFA helper on · local only</span>
+        {% endif %}
         <span class="verify-status" title="Every request is continuously evaluated">
           <span class="pulse"></span>
           <span>Continuous verification</span>

@@ -11,7 +11,9 @@ The server plays three roles from the architecture:
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -27,11 +29,18 @@ from . import __version__, anomaly, config, database, evaluation, risk, security
 
 API_TITLE = "Risk-Adaptive Zero-Trust Security Architecture for Hybrid Cloud"
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed.seed_identity()
     database.purge_expired_revocations()
+    if config.DEMO_TOTP_ENABLED:
+        logger.warning(
+            "ZT_ENABLE_DEMO_TOTP is on: the demo TOTP helper reveals step-up codes to "
+            "signed-in loopback clients. Never enable it in a real deployment."
+        )
     anomaly.get_model()
     simulator.bootstrap_history()
     with database.get_db() as conn:
@@ -79,6 +88,36 @@ def _bearer_token(request: Request) -> str | None:
 def _request_token(request: Request) -> str | None:
     """Session token for this request; the cookie takes precedence over Bearer."""
     return request.cookies.get(config.SESSION_COOKIE) or _bearer_token(request)
+
+
+# Headers set by reverse proxies. Behind a proxy the TCP peer is the proxy, so a
+# request carrying any of these is never treated as coming from this machine.
+_FORWARDING_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
+
+
+def _is_loopback_address(value: str | None) -> bool:
+    try:
+        return ipaddress.ip_address((value or "").strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def is_local_request(request: Request) -> bool:
+    """True only for a direct request from this machine to a loopback host.
+
+    Requires a loopback TCP peer, no proxy forwarding headers, and a loopback
+    Host header (which also rejects DNS-rebinding style host names).
+    """
+    if not request.client or not _is_loopback_address(request.client.host):
+        return False
+    if any(name in request.headers for name in _FORWARDING_HEADERS):
+        return False
+    hostname = (request.url.hostname or "").lower()
+    return hostname == "localhost" or _is_loopback_address(hostname)
+
+
+def demo_totp_available(request: Request) -> bool:
+    return config.DEMO_TOTP_ENABLED and is_local_request(request)
 
 
 def current_user(request: Request) -> dict[str, Any] | None:
@@ -130,6 +169,7 @@ def _page(request: Request, template: str, context: dict[str, Any] | None = None
         "environment": config.ENVIRONMENT,
         "version": __version__,
         "active": template.replace(".html", ""),
+        "demo_totp_available": demo_totp_available(request),
     }
     payload.update(context or {})
     return templates.TemplateResponse(request, template, payload)
@@ -255,12 +295,22 @@ def me(request: Request):
     return {"user": user, "devices": cards}
 
 
-@app.get("/api/auth/totp")
+@app.get("/api/auth/totp", include_in_schema=config.DEMO_TOTP_ENABLED)
 def current_totp(request: Request):
     """Local demo helper that shows the current step-up code for the user.
 
-    In a real deployment the code is only displayed on the enrolled device.
+    Disabled unless ZT_ENABLE_DEMO_TOTP is true; when disabled it is
+    indistinguishable from an unknown route. When enabled it is served only to
+    direct loopback clients. In a real deployment the code exists only on the
+    enrolled authenticator and step-up uses /api/access/challenge alone.
     """
+    if not config.DEMO_TOTP_ENABLED:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if not is_local_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="The demo TOTP helper is only available to loopback clients on this machine.",
+        )
     user = require_user(request)
     with database.get_db() as conn:
         selected = database.row(conn, "SELECT mfa_secret, mfa_enabled FROM users WHERE id = ?", (user["id"],))

@@ -9,6 +9,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+def env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable.
+
+    Only an explicit ``1``/``true``/``yes``/``on`` (case-insensitive) enables a
+    flag; any other value counts as false.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("ZT_DATA_DIR", BASE_DIR / "data"))
 STATIC_DIR = BASE_DIR / "app" / "static"
@@ -26,6 +38,13 @@ SESSION_SECRET = os.environ.get("ZT_SESSION_SECRET", "")
 # measured as "authentication overhead" in the evaluation.
 PBKDF2_ITERATIONS = int(os.environ.get("ZT_PBKDF2_ITERATIONS", "120000"))
 PBKDF2_ALGORITHM = "sha256"
+
+# Local demonstration helper (GET /api/auth/totp) that reveals the current TOTP
+# step-up code to the signed-in user, because the demo identities have no
+# enrolled phone. Disabled unless ZT_ENABLE_DEMO_TOTP is explicitly true, and
+# even then served only to direct loopback clients. Never enable it in a real
+# deployment: it lets anyone holding a password also pass step-up MFA.
+DEMO_TOTP_ENABLED = env_flag("ZT_ENABLE_DEMO_TOTP", default=False)
 
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCK_SECONDS = 300

@@ -18,6 +18,9 @@ os.environ["ZT_MODEL_PATH"] = str(TEST_DIR / "model.joblib")
 os.environ["ZT_SECRET_PATH"] = str(TEST_DIR / "signing.key")
 os.environ["ZT_SESSION_SECRET"] = "tests-only-session-secret"
 os.environ["ZT_PBKDF2_ITERATIONS"] = "1000"
+# Exercise the real default (demo TOTP helper off) even if the developer's shell
+# exported the flag; tests that need the helper enable it explicitly.
+os.environ.pop("ZT_ENABLE_DEMO_TOTP", None)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

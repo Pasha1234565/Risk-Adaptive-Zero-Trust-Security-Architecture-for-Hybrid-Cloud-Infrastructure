@@ -220,8 +220,15 @@
     if (previewBtn) previewBtn.addEventListener("click", function () { preview(result); });
   }
 
+  // Server-rendered flag: "on" only when ZT_ENABLE_DEMO_TOTP is set and this
+  // page was requested from a loopback client.
+  function demoTotpAvailable() {
+    return document.body.dataset.demoTotp === "on";
+  }
+
   function challengeHtml(result) {
     const enrolled = result.user && result.user.mfa_enabled;
+    const demo = demoTotpAvailable();
     return (
       '<div class="challenge-box">' +
         "<h3>Step-up authentication required</h3>" +
@@ -232,8 +239,10 @@
           ? '<div class="challenge-form">' +
               '<input id="mfa-code" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="Verification code">' +
               '<button class="btn btn-primary small" id="verify-mfa">Verify &amp; re-evaluate</button>' +
-              '<button class="btn btn-ghost small" id="demo-code">Get demo code</button>' +
-              '<span class="challenge-hint" id="challenge-hint">Local prototype: codes are generated from the enrolled TOTP secret.</span>' +
+              (demo ? '<button class="btn btn-ghost small" id="demo-code">Get demo code</button>' : "") +
+              '<span class="challenge-hint" id="challenge-hint">' + (demo
+                ? "Demo MFA helper enabled (ZT_ENABLE_DEMO_TOTP, local only): it reveals the code the enrolled authenticator would show."
+                : "Enter the code from the identity's enrolled authenticator app.") + "</span>" +
             "</div>"
           : "") +
       "</div>"
@@ -265,6 +274,7 @@
         window.ZT.setLoading(verify, false);
       }
     });
+    if (!demo) return;
     demo.addEventListener("click", async function () {
       try {
         const data = await window.ZT.api("/api/auth/totp");
