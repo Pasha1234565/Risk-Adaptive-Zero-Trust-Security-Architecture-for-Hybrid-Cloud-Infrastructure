@@ -16,15 +16,22 @@ for a risk-adaptive engine: the decision must be explainable to an analyst.
 
 from __future__ import annotations
 
+import logging
+import math
+import operator
+import re
 import time
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import joblib
 import numpy as np
 from sklearn.ensemble import IsolationForest
 
 from . import config
+
+logger = logging.getLogger(__name__)
 
 FEATURES = [
     "hour",
@@ -197,12 +204,64 @@ class BehaviourModel:
         }
 
 
+# Rule expressions have the form ``<feature><operator><number>``. They are
+# parsed with a strict pattern and a fixed operator table, never evaluated as
+# Python, so a malformed rule cannot execute code. Two-character operators come
+# first in the alternation so ">=" is not read as ">" followed by "=...".
+_RULE_OPERATORS: dict[str, Callable[[float, float], bool]] = {
+    ">=": operator.ge,
+    "<=": operator.le,
+    "==": operator.eq,
+    ">": operator.gt,
+    "<": operator.lt,
+}
+_RULE_PATTERN = re.compile(
+    r"^\s*(?P<field>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<op>>=|<=|==|>|<)\s*(?P<value>[-+]?\d+(?:\.\d+)?)\s*$"
+)
+
+
+@lru_cache(maxsize=128)
+def _parse_rule(expression: str) -> tuple[str, Callable[[float, float], bool], float] | None:
+    """Parse a rule expression into ``(feature, comparison, threshold)``.
+
+    Returns None (and logs once per distinct expression) when the expression
+    does not match the supported grammar.
+    """
+    match = _RULE_PATTERN.match(expression)
+    if not match:
+        logger.warning("Ignoring malformed anomaly rule expression: %r", expression)
+        return None
+    return match["field"], _RULE_OPERATORS[match["op"]], float(match["value"])
+
+
 def _rule_matches(expression: str, vector: dict[str, float]) -> bool:
-    try:
-        field, threshold = expression.split(">=")
-        return float(vector.get(field, 0.0)) >= float(threshold)
-    except (ValueError, TypeError):
+    """Return True when ``vector`` satisfies the comparison in ``expression``.
+
+    Malformed expressions, missing features and non-numeric or NaN values never
+    match, so a bad rule or input cannot crash scoring; it simply applies no
+    floor.
+    """
+    if not isinstance(expression, str):
         return False
+    parsed = _parse_rule(expression)
+    if parsed is None:
+        return False
+    field, compare, threshold = parsed
+    if field not in vector:
+        return False
+    try:
+        value = float(vector[field])
+    except (TypeError, ValueError):
+        return False
+    if math.isnan(value):
+        return False
+    return compare(value, threshold)
+
+
+# Surface malformed built-in rules in the log at import time rather than on the
+# first scored request.
+for _expression, _floor, _reason in RULES:
+    _parse_rule(_expression)
 
 
 def train(samples: int = 1200, contamination: float = 0.04, seed: int = 7) -> BehaviourModel:
