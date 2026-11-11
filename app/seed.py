@@ -8,7 +8,7 @@ lake, ML training, backup vault).
 
 from __future__ import annotations
 
-from . import config, database, security
+from . import config, database, mfa_crypto, security
 
 DEMO_USERS = [
     {
@@ -205,19 +205,26 @@ DEMO_POLICIES = [
 
 
 def seed_identity() -> None:
-    """Create the demo inventory and default engine configuration."""
+    """Create the demo inventory and default engine configuration.
+
+    Also provisions the MFA encryption key and encrypts any plaintext TOTP
+    secrets left by an older version (see app/mfa_crypto.py).
+    """
     database.init_db()
+    with database.get_db() as conn:
+        mfa_crypto.prepare(conn)
     if not database.is_empty():
         return
 
     now = database.utcnow()
+    key = mfa_crypto.active_key()
     with database.get_db() as conn:
         for user in DEMO_USERS:
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT INTO users
                    (email, name, role, department, password_hash, mfa_enabled,
                     mfa_secret, status, is_admin, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?)""",
                 (
                     user["email"],
                     user["name"],
@@ -225,11 +232,16 @@ def seed_identity() -> None:
                     user["department"],
                     security.hash_password(user["password"]),
                     user["mfa_enabled"],
-                    security.generate_totp_secret(),
                     user["status"],
                     user["is_admin"],
                     now,
                 ),
+            )
+            # The ciphertext is bound to the row id, which is known only now.
+            user_id = int(cursor.lastrowid)
+            conn.execute(
+                "UPDATE users SET mfa_secret = ? WHERE id = ?",
+                (mfa_crypto.encrypt_secret(security.generate_totp_secret(), user_id, key), user_id),
             )
 
         user_ids = {

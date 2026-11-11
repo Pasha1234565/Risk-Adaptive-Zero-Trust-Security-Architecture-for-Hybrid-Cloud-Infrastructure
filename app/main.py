@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from . import __version__, anomaly, config, database, evaluation, risk, security, seed, simulator
+from . import __version__, anomaly, config, database, evaluation, mfa_crypto, risk, security, seed, simulator
 
 API_TITLE = "Risk-Adaptive Zero-Trust Security Architecture for Hybrid Cloud"
 
@@ -376,9 +376,14 @@ def current_totp(request: Request):
         raise HTTPException(status_code=400, detail="MFA is not enabled for this identity")
     # Replay protection accepts each 30-second step once per user, so tell the
     # console when the current code has already been spent.
+    try:
+        secret = mfa_crypto.decrypt_secret(selected["mfa_secret"], user["id"])
+    except (mfa_crypto.MfaKeyError, mfa_crypto.SecretDecryptionError) as exc:
+        logger.error("Demo TOTP helper cannot decrypt the MFA secret of user %s: %s", user["id"], exc)
+        raise HTTPException(status_code=503, detail=risk.UNAVAILABLE_MESSAGE) from exc
     last_accepted = database.last_totp_counter(user["id"])
     return {
-        "code": security.totp_code(selected["mfa_secret"]),
+        "code": security.totp_code(secret),
         "seconds_remaining": security.totp_seconds_remaining(),
         "already_used": last_accepted is not None and last_accepted >= security.current_totp_counter(),
         "note": "Demo only: in production this code lives on the enrolled authenticator.",

@@ -13,6 +13,7 @@ the policies that matched, and a ranked list of reasons.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import secrets
 import threading
@@ -20,7 +21,9 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from . import config, database, anomaly
+from . import config, database, anomaly, mfa_crypto
+
+logger = logging.getLogger(__name__)
 
 SIGNAL_LABELS = {
     "behaviour": "Behavioural anomaly",
@@ -440,6 +443,25 @@ class ChallengeLimitError(ChallengeError):
         self.retry_after = retry_after
 
 
+class ChallengeUnavailableError(ChallengeError):
+    """Verification cannot run (for example the MFA secret cannot be decrypted).
+    Not the caller's fault, so it never counts as a failed attempt."""
+
+    status_code = 503
+
+
+UNAVAILABLE_MESSAGE = "Step-up verification is temporarily unavailable. Contact the administrator."
+
+
+def _subject_secret(user: dict) -> str:
+    try:
+        return mfa_crypto.user_secret(user)
+    except (mfa_crypto.MfaKeyError, mfa_crypto.SecretDecryptionError) as exc:
+        # The reason is logged server-side; the secret and key never are.
+        logger.error("Cannot decrypt the MFA secret of user %s: %s", user["id"], exc)
+        raise ChallengeUnavailableError(UNAVAILABLE_MESSAGE) from exc
+
+
 # One message for unknown, expired, used and cancelled challenges, so a caller
 # cannot tell which of those states a challenge id is in.
 INVALID_CHALLENGE = "Challenge expired or already used"
@@ -557,7 +579,7 @@ def verify_challenge(
 
         # consume_totp also rejects a time step already accepted for this user, so
         # a code observed once cannot complete a second challenge.
-        if not consume_totp(user["id"], user["mfa_secret"], code):
+        if not consume_totp(user["id"], _subject_secret(user), code):
             entry["failed_attempts"] += 1
             database.record_mfa_attempt(user["id"], False, actor_id)
             remaining = config.MFA_MAX_ATTEMPTS_PER_CHALLENGE - entry["failed_attempts"]

@@ -13,7 +13,7 @@ import time
 import pytest
 
 from app import config, database, risk, security
-from conftest import ADMIN, ANALYST, login
+from conftest import ADMIN, ANALYST, decrypted, login
 
 FINANCE = ("finance@hybridcloud.io", "Finance#2026")
 CONTRACTOR = ("contractor@hybridcloud.io", "Guest#2026")
@@ -22,7 +22,7 @@ CONTEXT = {"hour": 13, "failed_attempts_24h": 0, "mfa_verified": False}
 
 def _finance() -> dict:
     with database.get_db() as conn:
-        return database.row(conn, "SELECT * FROM users WHERE email = ?", (FINANCE[0],))
+        return decrypted(database.row(conn, "SELECT * FROM users WHERE email = ?", (FINANCE[0],)))
 
 
 def _body(simulate: bool = False) -> dict:

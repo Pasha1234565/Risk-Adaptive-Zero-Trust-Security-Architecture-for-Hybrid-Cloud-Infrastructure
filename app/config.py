@@ -40,6 +40,15 @@ DB_PATH = Path(os.environ.get("ZT_DB_PATH", DATA_DIR / "zerotrust.db"))
 MODEL_PATH = Path(os.environ.get("ZT_MODEL_PATH", DATA_DIR / "behaviour_model.joblib"))
 SECRET_PATH = Path(os.environ.get("ZT_SECRET_PATH", DATA_DIR / "signing.key"))
 
+# TOTP seeds are stored encrypted (AES-256-GCM, see app/mfa_crypto.py). The key
+# never goes into the database. It is read from the ZT_MFA_ENCRYPTION_KEY
+# environment variable (base64url, 32 bytes) when set, otherwise from
+# MFA_KEY_PATH, which is generated on first start of a database that holds no
+# encrypted secrets yet. Losing the key makes every enrolled authenticator
+# unusable, so back it up separately from the database.
+MFA_KEY_ENV = "ZT_MFA_ENCRYPTION_KEY"
+MFA_KEY_PATH = Path(os.environ.get("ZT_MFA_KEY_PATH", DATA_DIR / "mfa.key"))
+
 SESSION_COOKIE = "zt_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
 SESSION_SECRET = os.environ.get("ZT_SESSION_SECRET", "")

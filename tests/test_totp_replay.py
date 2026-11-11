@@ -15,7 +15,7 @@ import threading
 import pytest
 
 from app import config, database, risk, security
-from conftest import login
+from conftest import decrypted, login
 
 FINANCE = ("finance@hybridcloud.io", "Finance#2026")
 ANALYST_EMAIL = "analyst@hybridcloud.io"
@@ -29,7 +29,7 @@ CLEAN = {
 
 def _user(email: str) -> dict:
     with database.get_db() as conn:
-        return database.row(conn, "SELECT * FROM users WHERE email = ?", (email,))
+        return decrypted(database.row(conn, "SELECT * FROM users WHERE email = ?", (email,)))
 
 
 @pytest.fixture

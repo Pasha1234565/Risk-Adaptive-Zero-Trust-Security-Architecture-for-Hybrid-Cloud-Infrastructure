@@ -13,7 +13,7 @@ import pytest
 
 from app import config, database, security
 from app.main import app
-from conftest import ANALYST, login
+from conftest import ANALYST, decrypted, login
 
 LOCAL = {"base_url": "http://127.0.0.1:8000", "client": ("127.0.0.1", 50000)}
 FINANCE = ("finance@hybridcloud.io", "Finance#2026")
@@ -22,7 +22,7 @@ SERVICE = ("svc-backup@hybridcloud.io", "Service#2026")
 
 def _mfa_secret(email: str) -> str:
     with database.get_db() as conn:
-        return database.row(conn, "SELECT mfa_secret FROM users WHERE email = ?", (email,))["mfa_secret"]
+        return decrypted(database.row(conn, "SELECT id, mfa_secret FROM users WHERE email = ?", (email,)))["mfa_secret"]
 
 
 @pytest.fixture

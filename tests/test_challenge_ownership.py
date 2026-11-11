@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 
 from app import database, risk, security
-from conftest import ADMIN, ANALYST, login
+from conftest import ADMIN, ANALYST, decrypted, login
 
 FINANCE = ("finance@hybridcloud.io", "Finance#2026")
 CONTEXT = {"hour": 13, "failed_attempts_24h": 0, "mfa_verified": False}
@@ -26,7 +26,7 @@ CONTEXT = {"hour": 13, "failed_attempts_24h": 0, "mfa_verified": False}
 
 def _finance() -> dict:
     with database.get_db() as conn:
-        return database.row(conn, "SELECT * FROM users WHERE email = ?", (FINANCE[0],))
+        return decrypted(database.row(conn, "SELECT * FROM users WHERE email = ?", (FINANCE[0],)))
 
 
 def _ids() -> tuple[int, int, int]:

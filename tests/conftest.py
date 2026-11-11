@@ -21,6 +21,10 @@ os.environ["ZT_PBKDF2_ITERATIONS"] = "1000"
 # Exercise the real default (demo TOTP helper off) even if the developer's shell
 # exported the flag; tests that need the helper enable it explicitly.
 os.environ.pop("ZT_ENABLE_DEMO_TOTP", None)
+# TOTP secrets are encrypted at rest. Use a throw-away key file generated in the
+# test directory, never a key exported in the developer's shell.
+os.environ.pop("ZT_MFA_ENCRYPTION_KEY", None)
+os.environ["ZT_MFA_KEY_PATH"] = str(TEST_DIR / "mfa.key")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -42,6 +46,17 @@ def client():
 
 def login(client: TestClient, email: str, password: str):
     return client.post("/api/auth/login", json={"email": email, "password": password})
+
+
+def decrypted(user: dict) -> dict:
+    """Copy of a ``users`` row whose ``mfa_secret`` is the plaintext TOTP seed.
+
+    The database stores the seed encrypted (app/mfa_crypto.py); tests that
+    compute codes the way an authenticator app would need the plaintext.
+    """
+    from app import mfa_crypto
+
+    return {**user, "mfa_secret": mfa_crypto.user_secret(user)}
 
 
 @pytest.fixture(autouse=True)
