@@ -83,7 +83,7 @@ def test_expired_session_cannot_evaluate_or_answer(make_client):
     assert client.post("/api/access/evaluate", json=_body(), headers=_bearer(expired)).status_code == 401
     assert client.post("/api/access/challenge", json={"challenge_id": challenge, "code": "123456"},
                        headers=_bearer(expired)).status_code == 401
-    assert risk.CHALLENGES[challenge]["failed_attempts"] == 0
+    assert risk.challenge_state(challenge)["failed_attempts"] == 0
 
 
 # ---------------------------------------------------------------------------

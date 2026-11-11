@@ -478,7 +478,8 @@ def bootstrap_history() -> int:
     """Populate a believable baseline of normal activity on first run."""
     with database.get_db() as conn:
         count = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
-    if count:
+    # The claim makes exactly one of several workers starting together run it.
+    if count or not database.claim_once("bootstrap_history_claimed_at"):
         return 0
     results = run_normal(80, persist=True, spread_hours=24, seed=11)
     return len(results)

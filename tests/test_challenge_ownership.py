@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 
 from app import database, risk, security
-from conftest import ADMIN, ANALYST, decrypted, login
+from conftest import ADMIN, ANALYST, decrypted, expire_challenge, login
 
 FINANCE = ("finance@hybridcloud.io", "Finance#2026")
 CONTEXT = {"hour": 13, "failed_attempts_24h": 0, "mfa_verified": False}
@@ -82,11 +82,11 @@ def test_challenge_records_its_binding_on_the_server(make_client):
     token = _challenge(browser)
     user_id, device_id, resource_id = _ids()
 
-    entry = risk.CHALLENGES[token]
+    entry = risk.challenge_state(token)
 
     assert entry["user_id"] == user_id
-    assert entry["actor_id"] == user_id
-    assert entry["session_id"] == _jti(browser)
+    assert entry["actor_user_id"] == user_id
+    assert entry["session_hash"] == risk._session_hash(_jti(browser))
     assert (entry["device_id"], entry["resource_id"]) == (device_id, resource_id)
     with database.get_db() as conn:
         event = database.row(conn, "SELECT user_id, device_id, resource_id FROM events WHERE id = ?", (entry["event_id"],))
@@ -110,7 +110,7 @@ def test_different_user_is_rejected_without_burning_attempts(make_client):
         assert response.status_code == 400
         assert response.json()["detail"] == risk.INVALID_CHALLENGE
 
-    assert risk.CHALLENGES[token]["failed_attempts"] == 0
+    assert risk.challenge_state(token)["failed_attempts"] == 0
     assert _attempt_rows() == 0
     assert database.last_totp_counter(_finance()["id"]) is None
     # The owner can still complete it.
@@ -126,7 +126,7 @@ def test_administrator_cannot_complete_another_users_challenge(make_client):
 
     assert response.status_code == 400
     assert response.json()["detail"] == risk.INVALID_CHALLENGE
-    assert risk.CHALLENGES[token]["used"] is False
+    assert risk.challenge_state(token)["status"] == "pending"
 
 
 def test_ownership_cannot_be_claimed_through_the_request_body(make_client):
@@ -166,7 +166,7 @@ def test_challenge_dies_with_its_session(make_client):
 def test_expired_and_used_challenges_are_rejected(make_client):
     browser = _signed_in(make_client, FINANCE)
     expired = _challenge(browser)
-    risk.CHALLENGES[expired]["expires"] = time.time() - 1
+    expire_challenge(expired)
     assert _submit(browser, expired, _code()).status_code == 400
 
     used = _challenge(browser)
@@ -181,12 +181,12 @@ def test_tampered_original_request_invalidates_the_challenge(make_client):
     token = _challenge(browser)
     with database.get_db() as conn:
         other_resource = database.row(conn, "SELECT id FROM resources WHERE name = 'internal-wiki'")["id"]
-        conn.execute("UPDATE events SET resource_id = ? WHERE id = ?", (other_resource, risk.CHALLENGES[token]["event_id"]))
+        conn.execute("UPDATE events SET resource_id = ? WHERE id = ?", (other_resource, risk.challenge_state(token)["event_id"]))
 
     response = _submit(browser, token, _code())
 
     assert response.status_code == 400
-    assert token not in risk.CHALLENGES
+    assert risk.challenge_state(token)["status"] == "invalidated"
     assert database.last_totp_counter(_finance()["id"]) is None
 
 
@@ -195,9 +195,9 @@ def test_simulated_challenge_belongs_to_the_operator_session(make_client):
     token = _challenge(admin, simulate=True)
     subject = _signed_in(make_client, FINANCE)
 
-    entry = risk.CHALLENGES[token]
+    entry = risk.challenge_state(token)
     assert entry["user_id"] == _finance()["id"]
-    assert entry["actor_id"] != entry["user_id"]
+    assert entry["actor_user_id"] != entry["user_id"]
     # The subject's own session did not request it, so it cannot answer it ...
     assert _submit(subject, token, _code()).status_code == 400
     # ... while the operator session can, with the subject's authenticator code.

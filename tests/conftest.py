@@ -48,6 +48,17 @@ def login(client: TestClient, email: str, password: str):
     return client.post("/api/auth/login", json={"email": email, "password": password})
 
 
+def expire_challenge(token: str) -> None:
+    """Move a stored step-up challenge's expiry into the past."""
+    import time
+
+    from app import database, risk
+
+    with database.get_db() as conn:
+        conn.execute("UPDATE mfa_challenges SET expires_at = ? WHERE token_hash = ?",
+                     (time.time() - 1, risk.token_hash(token)))
+
+
 def decrypted(user: dict) -> dict:
     """Copy of a ``users`` row whose ``mfa_secret`` is the plaintext TOTP seed.
 

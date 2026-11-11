@@ -12,11 +12,11 @@ the policies that matched, and a ranked list of reasons.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
 import secrets
-import threading
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -421,7 +421,7 @@ def evaluate(
         result["challenge"] = None
         if persist and decision == "CHALLENGE":
             result["challenge"] = _issue_challenge(
-                result["event_id"], user["id"], device["id"], resource["id"], actor_id, session_id
+                conn, result["event_id"], user["id"], device["id"], resource["id"], actor_id, session_id
             )
 
     return result
@@ -466,17 +466,41 @@ def _subject_secret(user: dict) -> str:
 # cannot tell which of those states a challenge id is in.
 INVALID_CHALLENGE = "Challenge expired or already used"
 
-# Serialises challenge state changes: the app runs as one process whose sync
-# endpoints execute in a thread pool.
-_CHALLENGE_LOCK = threading.Lock()
+# Challenge rows are kept this long after expiry for audit, then purged.
+CHALLENGE_RETENTION_SECONDS = 24 * 60 * 60
 
 
-def _purge_expired_challenges(now: float) -> None:
-    for token in [key for key, entry in CHALLENGES.items() if entry["expires"] < now]:
-        CHALLENGES.pop(token, None)
+def token_hash(token: Any) -> str | None:
+    """SHA-256 of a challenge id; the id itself is never stored."""
+    if not isinstance(token, str) or not token:
+        return None
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _session_hash(session_id: str | None) -> str | None:
+    if not session_id:
+        return None
+    return hashlib.sha256(f"zt-session:{session_id}".encode("utf-8")).hexdigest()
+
+
+def purge_old_challenges(now: float | None = None, conn=None) -> int:
+    """Delete challenges that expired more than CHALLENGE_RETENTION_SECONDS ago."""
+    cutoff = (time.time() if now is None else now) - CHALLENGE_RETENTION_SECONDS
+    with database._using(conn) as conn:
+        return int(conn.execute("DELETE FROM mfa_challenges WHERE expires_at < ?", (cutoff,)).rowcount)
+
+
+def challenge_state(token: str) -> dict[str, Any] | None:
+    """Stored state of a challenge (for tests and diagnostics)."""
+    digest = token_hash(token)
+    if digest is None:
+        return None
+    with database.get_db() as conn:
+        return database.row(conn, "SELECT * FROM mfa_challenges WHERE token_hash = ?", (digest,))
 
 
 def _issue_challenge(
+    conn,
     event_id: int,
     user_id: int,
     device_id: int,
@@ -487,24 +511,23 @@ def _issue_challenge(
     """Create a single-use challenge bound to the original request.
 
     ``user_id`` is the subject whose TOTP must be presented; ``actor_id`` and
-    ``session_id`` identify who may answer it. The binding lives only on the
-    server, so nothing sent by the browser can change it.
+    ``session_id`` identify who may answer it. The binding lives only in the
+    database, so nothing sent by the browser can change it. The row is written
+    in the caller's transaction, together with the event it belongs to.
     """
     token = secrets.token_urlsafe(24)
     now = time.time()
-    with _CHALLENGE_LOCK:
-        _purge_expired_challenges(now)
-        CHALLENGES[token] = {
-            "event_id": event_id,
-            "user_id": user_id,
-            "device_id": device_id,
-            "resource_id": resource_id,
-            "actor_id": actor_id,
-            "session_id": session_id,
-            "expires": now + config.CHALLENGE_TTL_SECONDS,
-            "used": False,
-            "failed_attempts": 0,
-        }
+    purge_old_challenges(now, conn)
+    conn.execute(
+        """INSERT INTO mfa_challenges
+           (token_hash, event_id, user_id, device_id, resource_id, actor_user_id,
+            session_hash, mode, created_at, expires_at, failed_attempts, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, 0, 'pending')""",
+        (
+            token_hash(token), event_id, user_id, device_id, resource_id, actor_id,
+            _session_hash(session_id), now, now + config.CHALLENGE_TTL_SECONDS,
+        ),
+    )
     return {
         "id": token,
         "expires_in": config.CHALLENGE_TTL_SECONDS,
@@ -525,6 +548,89 @@ def _identity_retry_after(oldest_failure: str | None) -> int:
     return max(1, int(config.MFA_USER_FAILURE_WINDOW_SECONDS - elapsed) + 1)
 
 
+def _set_status(conn, digest: str, status: str) -> None:
+    conn.execute(
+        "UPDATE mfa_challenges SET status = ? WHERE token_hash = ? AND status = 'pending'",
+        (status, digest),
+    )
+
+
+def _verify_locked(conn, digest: str, code: str, actor_id: int | None,
+                   session_id: str | None) -> dict | ChallengeError:
+    """All checks and state changes of one verification, inside a write
+    transaction. Returns the event row on success or the error to raise; an
+    error is returned rather than raised so that its state changes (failed
+    attempt counters, cancellation) are committed."""
+    from .security import consume_totp
+
+    now = time.time()
+    entry = database.row(conn, "SELECT * FROM mfa_challenges WHERE token_hash = ?", (digest,))
+    if not entry or entry["status"] != "pending":
+        return ChallengeError(INVALID_CHALLENGE)
+    if entry["expires_at"] < now:
+        _set_status(conn, digest, "expired")
+        return ChallengeError(INVALID_CHALLENGE)
+    # Someone else's challenge looks exactly like an unknown one and changes nothing.
+    if entry["actor_user_id"] != actor_id or entry["session_hash"] != _session_hash(session_id):
+        return ChallengeError(INVALID_CHALLENGE)
+    user = database.row(conn, "SELECT * FROM users WHERE id = ?", (entry["user_id"],))
+    event = database.row(conn, "SELECT * FROM events WHERE id = ?", (entry["event_id"],))
+    # The stored request must still be the one the challenge was issued for.
+    if (
+        not user
+        or not event
+        or (event["user_id"], event["device_id"], event["resource_id"])
+        != (entry["user_id"], entry["device_id"], entry["resource_id"])
+    ):
+        _set_status(conn, digest, "invalidated")
+        return ChallengeError(INVALID_CHALLENGE)
+
+    # Identity-wide budget: creating new challenges cannot reset it.
+    failures, oldest = database.recent_mfa_failures(user["id"], config.MFA_USER_FAILURE_WINDOW_SECONDS, conn=conn)
+    if failures >= config.MFA_USER_MAX_FAILURES:
+        retry_after = _identity_retry_after(oldest)
+        return ChallengeLimitError(
+            "Too many incorrect verification codes for this identity. "
+            f"Try again in {max(1, -(-retry_after // 60))} minute(s).",
+            retry_after=retry_after,
+        )
+    try:
+        secret = _subject_secret(user)
+    except ChallengeUnavailableError as exc:
+        return exc
+
+    # consume_totp also rejects a time step already accepted for this user, so
+    # a code observed once cannot complete a second challenge.
+    if not consume_totp(user["id"], secret, code, conn=conn):
+        failed = conn.execute(
+            """UPDATE mfa_challenges
+               SET failed_attempts = failed_attempts + 1,
+                   status = CASE WHEN failed_attempts + 1 >= ? THEN 'cancelled' ELSE status END
+               WHERE token_hash = ? AND status = 'pending'
+               RETURNING failed_attempts""",
+            (config.MFA_MAX_ATTEMPTS_PER_CHALLENGE, digest),
+        ).fetchone()[0]
+        database.record_mfa_attempt(user["id"], False, actor_id, conn=conn)
+        remaining = config.MFA_MAX_ATTEMPTS_PER_CHALLENGE - failed
+        if remaining <= 0:
+            return ChallengeLimitError(
+                "Too many incorrect verification codes. This challenge has been cancelled; "
+                "submit a new access request."
+            )
+        return ChallengeError(f"Incorrect verification code. {remaining} attempt(s) remaining.")
+
+    # Single use: only a pending, unexpired row can be consumed, exactly once.
+    consumed = conn.execute(
+        """UPDATE mfa_challenges SET status = 'consumed', consumed_at = ?
+           WHERE token_hash = ? AND status = 'pending' AND expires_at >= ?""",
+        (now, digest, now),
+    ).rowcount
+    if consumed != 1:  # cannot happen under the write lock; fail closed regardless
+        raise ChallengeError(INVALID_CHALLENGE)
+    database.record_mfa_attempt(user["id"], True, actor_id, conn=conn)
+    return event
+
+
 def verify_challenge(
     token: str,
     code: str,
@@ -540,58 +646,24 @@ def verify_challenge(
     answered exactly like an unknown challenge and does not use up the
     owner's attempts.
 
+    State lives in the mfa_challenges table and every check and update runs
+    in one ``BEGIN IMMEDIATE`` transaction, so verifications of the same
+    challenge or identity are serialised across threads and worker processes.
+
     Raises ChallengeError (400) for unknown, expired, used, cancelled or
-    foreign challenges and for incorrect codes, and ChallengeLimitError (429)
-    when the challenge or the identity has run out of attempts.
+    foreign challenges and for incorrect codes, ChallengeLimitError (429)
+    when the challenge or the identity has run out of attempts, and
+    ChallengeUnavailableError (503) when the secret cannot be decrypted.
     """
-    from .security import consume_totp
-
-    with _CHALLENGE_LOCK:
-        entry = CHALLENGES.get(token) if isinstance(token, str) else None
-        if not entry or entry["used"] or entry["expires"] < time.time():
-            if entry is not None:
-                CHALLENGES.pop(token, None)
-            raise ChallengeError(INVALID_CHALLENGE)
-        if entry["actor_id"] != actor_id or entry["session_id"] != session_id:
-            raise ChallengeError(INVALID_CHALLENGE)
-        with database.get_db() as conn:
-            user = database.row(conn, "SELECT * FROM users WHERE id = ?", (entry["user_id"],))
-            event = database.row(conn, "SELECT * FROM events WHERE id = ?", (entry["event_id"],))
-        # The stored request must still be the one the challenge was issued for.
-        if (
-            not user
-            or not event
-            or (event["user_id"], event["device_id"], event["resource_id"])
-            != (entry["user_id"], entry["device_id"], entry["resource_id"])
-        ):
-            CHALLENGES.pop(token, None)
-            raise ChallengeError(INVALID_CHALLENGE)
-
-        # Identity-wide budget: creating new challenges cannot reset it.
-        failures, oldest = database.recent_mfa_failures(user["id"], config.MFA_USER_FAILURE_WINDOW_SECONDS)
-        if failures >= config.MFA_USER_MAX_FAILURES:
-            retry_after = _identity_retry_after(oldest)
-            raise ChallengeLimitError(
-                "Too many incorrect verification codes for this identity. "
-                f"Try again in {max(1, -(-retry_after // 60))} minute(s).",
-                retry_after=retry_after,
-            )
-
-        # consume_totp also rejects a time step already accepted for this user, so
-        # a code observed once cannot complete a second challenge.
-        if not consume_totp(user["id"], _subject_secret(user), code):
-            entry["failed_attempts"] += 1
-            database.record_mfa_attempt(user["id"], False, actor_id)
-            remaining = config.MFA_MAX_ATTEMPTS_PER_CHALLENGE - entry["failed_attempts"]
-            if remaining <= 0:
-                CHALLENGES.pop(token, None)
-                raise ChallengeLimitError(
-                    "Too many incorrect verification codes. This challenge has been cancelled; "
-                    "submit a new access request."
-                )
-            raise ChallengeError(f"Incorrect verification code. {remaining} attempt(s) remaining.")
-        entry["used"] = True
-        database.record_mfa_attempt(user["id"], True, actor_id)
+    digest = token_hash(token)
+    if digest is None:
+        raise ChallengeError(INVALID_CHALLENGE)
+    with database.get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        outcome = _verify_locked(conn, digest, code, actor_id, session_id)
+    if isinstance(outcome, ChallengeError):
+        raise outcome
+    event = outcome
 
     context = json.loads(event["context"])
     context["mfa_verified"] = True
@@ -716,7 +788,3 @@ def _public_resource(resource: dict) -> dict:
         "owner": resource["owner"],
     }
 
-
-# In-memory step-up challenges. Suitable for the single-process local
-# prototype; a production deployment would use a shared cache.
-CHALLENGES: dict[str, dict[str, Any]] = {}

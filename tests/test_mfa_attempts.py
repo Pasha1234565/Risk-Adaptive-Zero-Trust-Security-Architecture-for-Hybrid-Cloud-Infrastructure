@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app import config, database, risk, security
-from conftest import decrypted, login
+from conftest import decrypted, expire_challenge, login
 
 FINANCE = ("finance@hybridcloud.io", "Finance#2026")
 CONTEXT = {"hour": 13, "failed_attempts_24h": 0, "mfa_verified": False}
@@ -80,7 +80,7 @@ def test_first_invalid_code_reports_remaining_attempts():
 
     assert excinfo.value.status_code == 400
     assert str(excinfo.value) == "Incorrect verification code. 2 attempt(s) remaining."
-    assert risk.CHALLENGES[token]["failed_attempts"] == 1
+    assert risk.challenge_state(token)["failed_attempts"] == 1
 
 
 def test_third_invalid_code_cancels_the_challenge():
@@ -101,7 +101,7 @@ def test_third_invalid_code_cancels_the_challenge():
     ]
     assert excinfo.value.status_code == 429
     assert "cancelled" in str(excinfo.value)
-    assert token not in risk.CHALLENGES
+    assert risk.challenge_state(token)["status"] == "cancelled"
 
 
 def test_cancelled_challenge_cannot_be_reused_even_with_the_right_code():
@@ -123,13 +123,13 @@ def test_cancelled_challenge_cannot_be_reused_even_with_the_right_code():
 def test_expired_challenge_is_rejected_without_spending_the_code():
     user = _finance()
     token = _new_challenge(user)
-    risk.CHALLENGES[token]["expires"] = time.time() - 1
+    expire_challenge(token)
 
     with pytest.raises(risk.ChallengeError) as excinfo:
         risk.verify_challenge(token, _right(user))
 
     assert str(excinfo.value) == risk.INVALID_CHALLENGE
-    assert token not in risk.CHALLENGES
+    assert risk.challenge_state(token)["status"] == "expired"
     assert database.last_totp_counter(user["id"]) is None
 
 
@@ -137,7 +137,7 @@ def test_challenge_lifetime_is_unchanged():
     user = _finance()
     before = time.time()
     token = _new_challenge(user)
-    assert config.CHALLENGE_TTL_SECONDS - 2 <= risk.CHALLENGES[token]["expires"] - before <= config.CHALLENGE_TTL_SECONDS + 2
+    assert config.CHALLENGE_TTL_SECONDS - 2 <= risk.challenge_state(token)["expires_at"] - before <= config.CHALLENGE_TTL_SECONDS + 2
 
 
 def test_success_after_earlier_wrong_codes():
@@ -187,7 +187,7 @@ def test_new_challenges_do_not_reset_the_identity_budget():
     assert 1 <= excinfo.value.retry_after <= config.MFA_USER_FAILURE_WINDOW_SECONDS + 1
     # The throttled attempt neither spent the code nor consumed the challenge.
     assert database.last_totp_counter(user["id"]) is None
-    assert risk.CHALLENGES[token]["used"] is False
+    assert risk.challenge_state(token)["status"] == "pending"
     assert sum(1 for row in _attempts(user) if row["success"] == 0) == 6
 
 

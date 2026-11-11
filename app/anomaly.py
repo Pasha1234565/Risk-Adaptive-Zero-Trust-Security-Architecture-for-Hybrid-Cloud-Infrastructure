@@ -19,7 +19,9 @@ from __future__ import annotations
 import logging
 import math
 import operator
+import os
 import re
+import secrets
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -138,6 +140,9 @@ class BehaviourModel:
     def save(self, path: Path | None = None) -> None:
         target = path or config.MODEL_PATH
         target.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a private temporary file and rename it into place, so a
+        # worker loading the model never sees a partially written file.
+        temp = target.with_name(f".{target.name}.{os.getpid()}.{secrets.token_hex(6)}.tmp")
         joblib.dump(
             {
                 "model": self.model,
@@ -151,8 +156,22 @@ class BehaviourModel:
                 "contamination": self.contamination,
                 "features": FEATURES,
             },
-            target,
+            temp,
         )
+        for attempt in range(10):
+            try:
+                os.replace(temp, target)
+                return
+            except PermissionError:
+                # Windows refuses to replace a file another process has open
+                # for a moment (for example a worker loading the model).
+                if attempt == 9:
+                    temp.unlink(missing_ok=True)
+                    raise
+                time.sleep(0.1)
+            except OSError:
+                temp.unlink(missing_ok=True)
+                raise
 
     # -- scoring ---------------------------------------------------------
     def score(self, vector: dict[str, float]) -> dict[str, Any]:

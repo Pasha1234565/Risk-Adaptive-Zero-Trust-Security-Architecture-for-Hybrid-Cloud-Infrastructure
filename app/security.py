@@ -18,7 +18,7 @@ import struct
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import config, database
+from . import config, database, keystore
 
 # ---------------------------------------------------------------------------
 # Password hashing
@@ -74,14 +74,9 @@ def _secret() -> bytes:
     key_file = config.SECRET_PATH
     if key_file.exists():
         return key_file.read_bytes()
-    key_file.parent.mkdir(parents=True, exist_ok=True)
-    key = secrets.token_bytes(48)
-    key_file.write_bytes(key)
-    try:
-        key_file.chmod(0o600)
-    except OSError:
-        pass
-    return key
+    # Several workers may start at once: publish atomically so all of them
+    # sign with the same key (keystore returns whichever key won).
+    return keystore.create_once(key_file, secrets.token_bytes(48))
 
 
 def issue_token(user_id: int, *, ttl_seconds: int | None = None) -> str:
@@ -204,7 +199,7 @@ def verify_totp(secret: str, code: str, *, window: int = 1) -> bool:
     return bool(matching_totp_counters(secret, code, window=window))
 
 
-def consume_totp(user_id: int, secret: str, code: str, *, window: int = 1) -> bool:
+def consume_totp(user_id: int, secret: str, code: str, *, window: int = 1, conn=None) -> bool:
     """Verify ``code`` and atomically mark its time step as used for ``user_id``.
 
     Returns True only if the matched step is newer than every step previously
@@ -215,7 +210,7 @@ def consume_totp(user_id: int, secret: str, code: str, *, window: int = 1) -> bo
     counters = matching_totp_counters(secret, code, window=window)
     if not counters:
         return False
-    return database.advance_totp_counter(user_id, max(counters))
+    return database.advance_totp_counter(user_id, max(counters), conn=conn)
 
 
 # ---------------------------------------------------------------------------

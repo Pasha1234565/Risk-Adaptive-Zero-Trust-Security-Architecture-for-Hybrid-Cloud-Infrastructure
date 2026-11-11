@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     seed.seed_identity()
     database.purge_expired_revocations()
+    risk.purge_old_challenges()
     if config.DEMO_TOTP_ENABLED:
         logger.warning(
             "ZT_ENABLE_DEMO_TOTP is on: the demo TOTP helper reveals step-up codes to "
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
     simulator.bootstrap_history()
     with database.get_db() as conn:
         existing = conn.execute("SELECT COUNT(*) AS n FROM eval_runs").fetchone()["n"]
-    if not existing:
+    if not existing and database.claim_once("baseline_evaluation_claimed_at"):
         evaluation.run_evaluation("Baseline (seeded)", persist_run=True)
     yield
 

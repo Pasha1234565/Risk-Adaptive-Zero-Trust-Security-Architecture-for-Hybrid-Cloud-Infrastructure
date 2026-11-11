@@ -160,6 +160,30 @@ CREATE TABLE IF NOT EXISTS mfa_attempts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mfa_attempts_user_ts ON mfa_attempts(user_id, ts);
+
+-- Step-up MFA challenges. Shared by every worker process through this file.
+-- Only a SHA-256 hash of the challenge id is stored (the id itself is a bearer
+-- secret held by the browser), and only a hash of the session id. Rows bind the
+-- challenge to the evaluated request (event, subject, device, resource) and to
+-- the actor and session that may answer it. Times are Unix seconds.
+CREATE TABLE IF NOT EXISTS mfa_challenges (
+    token_hash      TEXT PRIMARY KEY,
+    event_id        INTEGER NOT NULL REFERENCES events(id),
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    device_id       INTEGER NOT NULL REFERENCES devices(id),
+    resource_id     INTEGER NOT NULL REFERENCES resources(id),
+    actor_user_id   INTEGER REFERENCES users(id),
+    session_hash    TEXT,
+    mode            TEXT NOT NULL DEFAULT 'live' CHECK (mode IN ('live', 'simulation')),
+    created_at      REAL NOT NULL,
+    expires_at      REAL NOT NULL,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'consumed', 'cancelled', 'expired', 'invalidated')),
+    consumed_at     REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_expires ON mfa_challenges(expires_at);
 """
 
 
@@ -286,14 +310,34 @@ def purge_expired_revocations(now: int | None = None) -> int:
     return int(cursor.rowcount)
 
 
-def advance_totp_counter(user_id: int, counter: int) -> bool:
+@contextmanager
+def _using(conn: sqlite3.Connection | None) -> Iterator[sqlite3.Connection]:
+    """Use the caller's connection (and transaction) when given, else a new one."""
+    if conn is not None:
+        yield conn
+        return
+    with get_db() as own:
+        yield own
+
+
+def claim_once(key: str) -> bool:
+    """Atomically claim a one-time start-up task; True only for the first
+    caller across all processes sharing the database."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (key, json.dumps(utcnow()))
+        )
+        return cursor.rowcount == 1
+
+
+def advance_totp_counter(user_id: int, counter: int, conn: sqlite3.Connection | None = None) -> bool:
     """Record ``counter`` as the user's last accepted TOTP step if it is newer.
 
     A single UPSERT with a conditional update runs under SQLite's write lock,
     so concurrent requests presenting the same code cannot both succeed.
     Returns True when the counter was accepted.
     """
-    with get_db() as conn:
+    with _using(conn) as conn:
         cursor = conn.execute(
             """INSERT INTO totp_counters (user_id, last_counter, updated_at) VALUES (?, ?, ?)
                ON CONFLICT(user_id) DO UPDATE
@@ -304,22 +348,24 @@ def advance_totp_counter(user_id: int, counter: int) -> bool:
         return cursor.rowcount == 1
 
 
-def record_mfa_attempt(user_id: int, success: bool, actor_user_id: int | None = None) -> None:
-    with get_db() as conn:
+def record_mfa_attempt(user_id: int, success: bool, actor_user_id: int | None = None,
+                       conn: sqlite3.Connection | None = None) -> None:
+    with _using(conn) as conn:
         conn.execute(
             "INSERT INTO mfa_attempts (user_id, actor_user_id, ts, success) VALUES (?, ?, ?, ?)",
             (int(user_id), actor_user_id, utcnow(), 1 if success else 0),
         )
 
 
-def recent_mfa_failures(user_id: int, window_seconds: int) -> tuple[int, str | None]:
+def recent_mfa_failures(user_id: int, window_seconds: int,
+                        conn: sqlite3.Connection | None = None) -> tuple[int, str | None]:
     """Failed verifications for ``user_id`` inside the window, counted only
     since the identity's last successful verification.
 
     Returns ``(count, oldest_counted_failure_ts)``.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat(timespec="seconds")
-    with get_db() as conn:
+    with _using(conn) as conn:
         last_success = conn.execute(
             "SELECT MAX(ts) AS ts FROM mfa_attempts WHERE user_id = ? AND success = 1", (int(user_id),)
         ).fetchone()["ts"]

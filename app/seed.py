@@ -8,6 +8,8 @@ lake, ML training, backup vault).
 
 from __future__ import annotations
 
+import json
+
 from . import config, database, mfa_crypto, security
 
 DEMO_USERS = [
@@ -218,7 +220,13 @@ def seed_identity() -> None:
 
     now = database.utcnow()
     key = mfa_crypto.active_key()
+    password_hashes = {user["email"]: security.hash_password(user["password"]) for user in DEMO_USERS}
     with database.get_db() as conn:
+        # Several workers can start on a fresh database at the same time. The
+        # write lock plus a re-check inside it means exactly one of them seeds.
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+            return
         for user in DEMO_USERS:
             cursor = conn.execute(
                 """INSERT INTO users
@@ -230,7 +238,7 @@ def seed_identity() -> None:
                     user["name"],
                     user["role"],
                     user["department"],
-                    security.hash_password(user["password"]),
+                    password_hashes[user["email"]],
                     user["mfa_enabled"],
                     user["status"],
                     user["is_admin"],
@@ -283,7 +291,14 @@ def seed_identity() -> None:
                 ),
             )
 
-    database.set_setting("thresholds", config.DEFAULT_THRESHOLDS)
-    database.set_setting("weights", config.DEFAULT_WEIGHTS)
-    database.set_setting("policy_version", 1)
-    database.set_setting("demo_seeded_at", now)
+        for name, value in (
+            ("thresholds", config.DEFAULT_THRESHOLDS),
+            ("weights", config.DEFAULT_WEIGHTS),
+            ("policy_version", 1),
+            ("demo_seeded_at", now),
+        ):
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (name, json.dumps(value)),
+            )
