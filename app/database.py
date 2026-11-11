@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterator
@@ -124,6 +125,17 @@ CREATE TABLE IF NOT EXISTS login_attempts (
     success INTEGER NOT NULL,
     source_ip TEXT NOT NULL DEFAULT ''
 );
+
+-- Server-side session revocation, keyed by the token's jti claim. A row only
+-- needs to live until the token itself expires (expires_at, Unix seconds).
+CREATE TABLE IF NOT EXISTS revoked_sessions (
+    jti        TEXT PRIMARY KEY,
+    user_id    INTEGER,
+    revoked_at TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires ON revoked_sessions(expires_at);
 """
 
 
@@ -197,6 +209,36 @@ def engine_config() -> dict:
     # Keep the weighted score on a 0-100 scale.
     clean_weights = {k: round(v * 100.0 / total, 2) for k, v in clean_weights.items()}
     return {"thresholds": clean_thresholds, "weights": clean_weights}
+
+
+def revoke_session(jti: str, user_id: int | None, expires_at: int) -> None:
+    """Record a session id as revoked until its token expiry (idempotent)."""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO revoked_sessions (jti, user_id, revoked_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (jti, user_id, utcnow(), int(expires_at)),
+        )
+
+
+def is_session_revoked(jti: str) -> bool:
+    with get_db() as conn:
+        found = conn.execute(
+            "SELECT 1 FROM revoked_sessions WHERE jti = ?", (jti,)
+        ).fetchone()
+    return found is not None
+
+
+def purge_expired_revocations(now: int | None = None) -> int:
+    """Delete revocation rows whose tokens have expired; return rows removed.
+
+    Safe because an expired token is already rejected by its ``exp`` claim, so
+    the revocation record no longer protects anything.
+    """
+    cutoff = int(time.time()) if now is None else int(now)
+    with get_db() as conn:
+        cursor = conn.execute("DELETE FROM revoked_sessions WHERE expires_at < ?", (cutoff,))
+    return int(cursor.rowcount)
 
 
 def is_empty() -> bool:

@@ -18,7 +18,7 @@ import struct
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import config
+from . import config, database
 
 # ---------------------------------------------------------------------------
 # Password hashing
@@ -103,6 +103,11 @@ def issue_token(user_id: int, *, ttl_seconds: int | None = None) -> str:
 
 
 def decode_token(token: str) -> dict | None:
+    """Verify signature and expiry; return the claims or None.
+
+    This is a stateless check. Use :func:`verify_session_token` for requests so
+    that revoked (logged-out) sessions are rejected as well.
+    """
     try:
         header_b64, payload_b64, signature_b64 = token.split(".")
         signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
@@ -110,11 +115,43 @@ def decode_token(token: str) -> dict | None:
         if not hmac.compare_digest(expected, _b64url_decode(signature_b64)):
             return None
         payload = json.loads(_b64url_decode(payload_b64))
-    except (ValueError, json.JSONDecodeError, TypeError):
+        if not isinstance(payload, dict):
+            return None
+        expires_at = int(payload.get("exp", 0))
+    except (ValueError, json.JSONDecodeError, TypeError, AttributeError):
         return None
-    if int(payload.get("exp", 0)) < int(time.time()):
+    if expires_at < int(time.time()):
+        return None
+    # The jti is the server-side session id used for revocation.
+    if not isinstance(payload.get("jti"), str) or not payload["jti"]:
         return None
     return payload
+
+
+def verify_session_token(token: str) -> dict | None:
+    """Return the claims of a valid, unexpired and non-revoked session token."""
+    payload = decode_token(token)
+    if payload is None or database.is_session_revoked(payload["jti"]):
+        return None
+    return payload
+
+
+def revoke_session_token(token: str) -> bool:
+    """Revoke the session behind ``token`` until it would have expired.
+
+    Returns False when the token is not a valid session token (nothing to
+    revoke). Expired revocation rows are purged opportunistically.
+    """
+    payload = decode_token(token)
+    if payload is None:
+        return False
+    try:
+        user_id: int | None = int(payload.get("sub"))
+    except (TypeError, ValueError):
+        user_id = None
+    database.revoke_session(payload["jti"], user_id, int(payload["exp"]))
+    database.purge_expired_revocations()
+    return True
 
 
 # ---------------------------------------------------------------------------

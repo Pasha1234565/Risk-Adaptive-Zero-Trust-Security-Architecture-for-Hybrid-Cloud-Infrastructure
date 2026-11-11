@@ -31,6 +31,7 @@ API_TITLE = "Risk-Adaptive Zero-Trust Security Architecture for Hybrid Cloud"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     seed.seed_identity()
+    database.purge_expired_revocations()
     anomaly.get_model()
     simulator.bootstrap_history()
     with database.get_db() as conn:
@@ -68,15 +69,23 @@ async def security_headers(request: Request, call_next):
 # ---------------------------------------------------------------------------
 
 
+def _bearer_token(request: Request) -> str | None:
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip() or None
+    return None
+
+
+def _request_token(request: Request) -> str | None:
+    """Session token for this request; the cookie takes precedence over Bearer."""
+    return request.cookies.get(config.SESSION_COOKIE) or _bearer_token(request)
+
+
 def current_user(request: Request) -> dict[str, Any] | None:
-    token = request.cookies.get(config.SESSION_COOKIE)
-    if not token:
-        header = request.headers.get("authorization", "")
-        if header.lower().startswith("bearer "):
-            token = header[7:].strip()
+    token = _request_token(request)
     if not token:
         return None
-    payload = security.decode_token(token)
+    payload = security.verify_session_token(token)
     if not payload:
         return None
     try:
@@ -222,7 +231,13 @@ def login(payload: LoginPayload, request: Request):
 
 
 @app.post("/api/auth/logout")
-def logout():
+def logout(request: Request):
+    # Revoke every session token presented (cookie and/or Bearer) server-side,
+    # so a copied token cannot be replayed after sign-out. Logout stays
+    # idempotent: a missing or invalid token still returns ok.
+    presented = {request.cookies.get(config.SESSION_COOKIE), _bearer_token(request)}
+    for token in presented - {None, ""}:
+        security.revoke_session_token(token)
     response = JSONResponse({"ok": True})
     response.delete_cookie(config.SESSION_COOKIE, path="/")
     return response
