@@ -159,12 +159,41 @@ cannot create an unreachable band.
 
 ### Step-up flow
 
-A `CHALLENGE` persists the event and creates an in-memory challenge token valid for 180 seconds.
-`POST /api/access/challenge` verifies the TOTP, marks the token used, sets `mfa_verified = true`
-in the stored context, re-evaluates, and updates the event's decision and reasons. The re-scored
-result can therefore *recover* from Challenge to Allow if the remaining risk is low, or remain
-elevated if other signals are still bad. Challenge tokens are single-use and are not persisted;
-this is why the prototype must run with one worker.
+A `CHALLENGE` persists the event and creates an in-memory challenge token valid for 180 seconds
+(`CHALLENGE_TTL_SECONDS`). The server binds the token to the **subject** whose TOTP must be
+presented, the signed-in **actor** and **session** (`jti`) that requested it, and the device,
+resource and event of the original request. Nothing in the request body can change the binding.
+
+`POST /api/access/challenge` resolves the user and session from the authenticated session and
+then, under a process-wide lock:
+
+1. rejects unknown, expired, used or cancelled tokens and tokens owned by another user or
+   session with one generic `400 Challenge expired or already used` (no existence oracle, and the
+   owner's attempts are not touched);
+2. rejects the token if the stored event no longer matches the bound subject, device and
+   resource;
+3. refuses verification with `429` (+ `Retry-After`) while the subject has 6 or more failures
+   in the last 15 minutes since their last success (`mfa_attempts`), so new challenges cannot
+   reset the guess budget;
+4. verifies the code with `security.consume_totp()`. The matched 30-second step must be newer
+   than the subject's last accepted step (`totp_counters`), updated by a single conditional
+   UPSERT, so concurrent duplicates and replays fail. A wrong code increments the challenge's
+   failure count; the third cancels it (`429`);
+5. on success, marks the token used, records the attempt, sets `mfa_verified = true`,
+   re-evaluates, and updates the event's decision and reasons.
+
+The re-scored result can *recover* from Challenge to Allow if the remaining risk is low, or
+remain elevated if other signals are still bad. Challenge tokens are single-use and are not
+persisted, which is why the prototype must run with one worker.
+
+### Identity resolution and simulation
+
+`POST /api/access/evaluate` takes the actor from the session. `user_id` is optional and defaults
+to the actor; a different subject is a *simulation* and requires a role in
+`config.SIMULATION_ROLES` (`security_admin`, `analyst`) or `is_admin`, otherwise `403`. The same
+check guards `/api/sim/scenario`, `/api/sim/normal` and `/api/sim/evaluation`. The engine still
+requires the device to belong to the subject. Each persisted event stores the subject in
+`events.user_id` and the actor in `events.actor_user_id`; system-generated traffic has no actor.
 
 ## 6. Data model
 
@@ -178,20 +207,28 @@ policies(id, name, description, resource_category, required_device_trust,
          mfa_required, allowed_roles, effect, enabled)
 events(id, ts, user_id, device_id, resource_id, action, decision, risk_score,
        anomaly_score, base_risk, signals, reasons, context, source_ip, geo,
-       latency_ms, ground_truth, scenario, outcome)
+       latency_ms, ground_truth, scenario, outcome, actor_user_id)
 alerts(id, ts, severity, title, detail, event_id, status)
 eval_runs(id, ts, name, samples, metrics, config, duration_ms)
 settings(key, value)
 login_attempts(id, email, ts, success, source_ip)
 revoked_sessions(jti, user_id, revoked_at, expires_at)
+totp_counters(user_id, last_counter, updated_at)
+mfa_attempts(id, user_id, actor_user_id, ts, success)
 ```
+
+Schema changes are additive. `init_db()` creates missing tables and applies column migrations
+listed in `database.COLUMN_MIGRATIONS` (currently `events.actor_user_id`) only when the column is
+absent, so existing rows are preserved and repeated runs are no-ops.
 
 `signals`, `reasons`, `context` and `metrics` are JSON text. Keeping the full decision payload
 means the monitoring and evaluation views do not need to re-run the engine to explain history.
 
 ## 7. Traffic sources
 
-- **Live console** requests are persisted with `scenario = 'live'` and `ground_truth = 0`.
+- **Live console** requests are persisted with `scenario = 'live'`, `ground_truth = 0` and the
+  signed-in user as `actor_user_id`. Operator-run scenarios and normal traffic also record the
+  operator; startup history is system-generated (`actor_user_id` NULL).
 - **Simulator** scenarios are persisted with `ground_truth = 1`, a scenario id and a MITRE
   technique. Each run creates one to five variants with deterministic context perturbations.
 - **Normal traffic** is generated from role-appropriate resources/devices with realistic

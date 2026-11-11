@@ -113,6 +113,44 @@ schema, and the Challenge panel asks for the code from an enrolled authenticator
 verification itself is unchanged. **Never enable the helper on a shared, LAN-exposed or real
 deployment**; in production the code exists only on the user's authenticator.
 
+Each 30-second code is accepted **once** (see below). If you request a demo code for a step that
+has already been used, the helper says so and asks you to wait for the next code.
+
+### Step-up verification rules
+
+| Rule | Behaviour |
+| --- | --- |
+| Lifetime | A challenge expires 180 s after it is issued (`CHALLENGE_TTL_SECONDS`). |
+| Single use | A completed challenge cannot be used again. |
+| Ownership | Only the **same user in the same session** that triggered the challenge may answer it. Another user, an administrator, or the same user in another session (including after logout) gets `400 Challenge expired or already used`, and such attempts do not count against the owner. |
+| Attempts per challenge | 3 incorrect codes cancel the challenge (`429`); earlier failures return `400` with the attempts remaining. Default `ZT_MFA_MAX_ATTEMPTS=3`. |
+| Attempts per identity | 6 incorrect codes within 15 minutes, across all of that identity's challenges, pause verification (`429` + `Retry-After`) until the oldest failure leaves the window. A success starts a new window. Defaults `ZT_MFA_USER_MAX_FAILURES=6`, `ZT_MFA_USER_WINDOW_SECONDS=900`. Password login is not affected and nothing locks permanently. |
+| Replay | The matched TOTP time step is stored per user (`totp_counters`); a step that was already accepted, or an older one, is rejected even inside the ±1 step tolerance. Only counters are stored, never codes. |
+
+Failed and successful verifications are recorded in `mfa_attempts` (identity, signed-in actor,
+time, outcome; no codes).
+
+### Who can evaluate whom
+
+The access console and `POST /api/access/evaluate` always take the **actor** from the session.
+
+| Role | Evaluate own identity | Evaluate another identity | Run `/api/sim/scenario`, `/api/sim/normal`, `/api/sim/evaluation` | Admin APIs |
+| --- | --- | --- | --- | --- |
+| `security_admin` | yes | yes (simulation) | yes | yes |
+| `analyst` (SOC) | yes | yes (simulation) | yes | no |
+| `developer`, `finance`, `contractor`, `service` | yes | no (`403`) | no (`403`) | no |
+
+- `user_id` in the request body is optional and defaults to the signed-in user. Any other value
+  from a role outside `config.SIMULATION_ROLES` is refused with `403` and nothing is recorded.
+- The device must belong to the evaluated identity (`400` otherwise).
+- Every stored event keeps the evaluated **subject** (`events.user_id`) and the **actor**
+  (`events.actor_user_id`). Monitoring shows "Initiated by" and marks simulations. System
+  traffic, and events recorded before this column existed, have no actor.
+- A challenge raised by a simulation belongs to the operator's session; the subject's
+  authenticator code is still required.
+- For non-simulation roles the console's identity selector shows only the signed-in user, and the
+  simulation page explains the restriction. The server rule is the control; the UI mirrors it.
+
 ---
 
 ## What the prototype covers
@@ -289,6 +327,10 @@ This is a research prototype, not a hardened production service.
 - Login attempts are throttled: five failures within five minutes lock the account temporarily.
 - Logout revokes the session server-side (`revoked_sessions`, keyed by the token `jti`).
 - The demo TOTP helper is off by default (`ZT_ENABLE_DEMO_TOTP`) and loopback-only when on.
+- Step-up challenges are owned by the requesting user and session, limited to 3 wrong codes per
+  challenge and 6 per identity per 15 minutes, and each TOTP time step is accepted once.
+- Access evaluation trusts only the session identity; acting for another identity and running
+  simulations require the `security_admin` or `analyst` role, and the actor is audited.
 - Local environment files (`.env`, `.env.*`, `*.env`) are git-ignored; only `.env.example`
   may be committed.
 - Step-up challenge state is held in memory, so the app must run as a single worker. Do not run
@@ -302,19 +344,38 @@ For a production deployment, replace SQLite with a shared database, move challen
 sessions to Redis or another shared store, use a managed IdP for TOTP/WebAuthn, put TLS and an
 authenticating reverse proxy in front of the app, and forward events to a SIEM.
 
-### Known open security issues
+### Security issues from the Phase 2 review
 
-These were identified during the Phase 2 review and are **not fixed yet**:
+The four issues recorded after Phase 2 were addressed in Phase 2.1 and are covered by
+regression tests:
 
-1. **No attempt limit on step-up verification.** A wrong code at `POST /api/access/challenge`
-   leaves the challenge usable for its full 180 seconds, so codes can be guessed repeatedly.
-2. **Challenges are not bound to the session user.** Any authenticated user who holds a
-   challenge id can submit it.
-3. **TOTP replay within the ±1 step window.** The last used time step is not recorded, so one
-   code can satisfy more than one challenge for about 90 seconds.
-4. **The PDP trusts the identity in the request body.** `POST /api/access/evaluate` takes
-   `user_id` from the client, and the simulation endpoints require only authentication, not an
-   administrator.
+| Issue | Status | Tests |
+| --- | --- | --- |
+| No attempt limit on step-up verification | Fixed: 3 per challenge, 6 per identity per 15 min | `tests/test_mfa_attempts.py` |
+| Challenges not bound to the session user | Fixed: bound to user, session, device, resource and event | `tests/test_challenge_ownership.py` |
+| TOTP replay within the ±1 step window | Fixed: per-user accepted-step counter, atomic in SQLite | `tests/test_totp_replay.py` |
+| PDP trusted the identity in the request body | Fixed: session identity, simulation roles, actor audit | `tests/test_identity_enforcement.py` |
+
+Cross-control negative tests are in `tests/test_security_negative.py`.
+
+### Known limitations
+
+These remain true and are acceptable only for a local research prototype:
+
+- **Single process only.** Challenges and the challenge lock live in memory, so challenges are
+  lost on restart and the app must run as one Uvicorn worker.
+- **Operators can spend a subject's MFA budget.** Wrong codes entered by an operator on a
+  simulated challenge count towards the subject's per-identity limit, so an analyst could pause
+  step-up for another identity for up to 15 minutes. Both are trusted roles here.
+- **Directory visibility.** `GET /api/context/inventory` still lists every identity, device and
+  resource to any signed-in user (it powers the console); only acting on them is restricted.
+- **Guessing is limited, not impossible.** With the defaults an attacker who already has a
+  password gets at most 6 guesses per identity per 15 minutes, each with about a 3-in-a-million
+  chance.
+- **Demo-grade MFA.** TOTP secrets are stored in the database in plaintext, and the optional demo
+  helper reveals codes on loopback.
+- **Transport and deployment.** No `Secure` cookie flag, no HSTS, SQLite, synthetic data, and no
+  external IdP. The system is not production-ready.
 
 ---
 
