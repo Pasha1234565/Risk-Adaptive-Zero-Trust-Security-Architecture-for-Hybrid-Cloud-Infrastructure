@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>API docs · {{ title }}</title>
+  <link rel="icon" href="/static/img/shield.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/vendor/swagger-ui/swagger-ui.css">
+</head>
+<body>
+  <!-- Swagger UI is served from pinned local assets (see static/vendor/swagger-ui/VENDORED.md)
+       so the application's Content-Security-Policy applies unchanged. -->
+  <div id="swagger-ui" data-openapi-url="{{ openapi_url }}"></div>
+  <script src="/static/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+  <script src="/static/js/api-docs.js"></script>
+</body>
+</html>

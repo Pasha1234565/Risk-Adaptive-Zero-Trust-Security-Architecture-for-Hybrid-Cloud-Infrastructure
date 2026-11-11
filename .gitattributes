@@ -1,0 +1,4 @@
+# Vendored third-party assets must stay byte-identical to the upstream release
+# (their SHA-256 is recorded in VENDORED.md and checked by tests), so Git must
+# never convert their line endings, whatever core.autocrlf is set to.
+app/static/vendor/** -text

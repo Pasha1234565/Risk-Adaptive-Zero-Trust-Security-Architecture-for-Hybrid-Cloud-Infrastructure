@@ -50,7 +50,27 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title=API_TITLE, version=__version__, lifespan=lifespan)
+# One documented location for the API docs and schema. FastAPI's default /docs
+# and /redoc pages load assets from a CDN plus an inline script, which the
+# Content-Security-Policy below blocks, so they are disabled and replaced by
+# /api/docs (local assets); the schema moves next to it under /api/.
+API_DOCS_URL = "/api/docs"
+OPENAPI_URL = "/api/openapi.json"
+
+# Applied to every response, including the API docs page.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+)
+
+app = FastAPI(
+    title=API_TITLE,
+    version=__version__,
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=OPENAPI_URL,
+)
 app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(config.TEMPLATES_DIR))
 templates.env.globals["version"] = __version__
@@ -63,11 +83,7 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-    response.headers.setdefault(
-        "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'",
-    )
+    response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
     if request.url.path.startswith("/api/"):
         response.headers.setdefault("Cache-Control", "no-store")
     return response
@@ -951,6 +967,14 @@ def login_page(request: Request):
             "version": __version__,
             "error": request.query_params.get("error"),
         },
+    )
+
+
+@app.get(API_DOCS_URL, include_in_schema=False)
+def api_docs_page(request: Request):
+    """Swagger UI built from pinned local assets so the default CSP applies."""
+    return templates.TemplateResponse(
+        request, "api_docs.html", {"title": API_TITLE, "openapi_url": OPENAPI_URL}
     )
 
 
