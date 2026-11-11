@@ -421,7 +421,8 @@ def evaluate(
         result["challenge"] = None
         if persist and decision == "CHALLENGE":
             result["challenge"] = _issue_challenge(
-                conn, result["event_id"], user["id"], device["id"], resource["id"], actor_id, session_id
+                conn, result["event_id"], user["id"], device["id"], resource["id"], actor_id, session_id,
+                mode=challenge_mode(user["id"], actor_id, scenario),
             )
 
     return result
@@ -499,6 +500,24 @@ def challenge_state(token: str) -> dict[str, Any] | None:
         return database.row(conn, "SELECT * FROM mfa_challenges WHERE token_hash = ?", (digest,))
 
 
+LIVE = "live"
+SIMULATION = "simulation"
+SIMULATED_OUTCOMES = ("success", "failure")
+
+
+def challenge_mode(user_id: int, actor_id: int | None, scenario: str) -> str:
+    """``simulation`` when an operator acts for another identity or the request
+    comes from the simulator (scenario other than ``live``); otherwise ``live``.
+
+    A simulation challenge is answered with an operator-chosen outcome, never
+    with the subject's authenticator code, so it cannot consume the subject's
+    TOTP time step or count towards the subject's failure throttle.
+    """
+    if scenario != "live" or (actor_id is not None and actor_id != user_id):
+        return SIMULATION
+    return LIVE
+
+
 def _issue_challenge(
     conn,
     event_id: int,
@@ -507,6 +526,8 @@ def _issue_challenge(
     resource_id: int,
     actor_id: int | None,
     session_id: str | None,
+    *,
+    mode: str = LIVE,
 ) -> dict[str, Any]:
     """Create a single-use challenge bound to the original request.
 
@@ -522,16 +543,17 @@ def _issue_challenge(
         """INSERT INTO mfa_challenges
            (token_hash, event_id, user_id, device_id, resource_id, actor_user_id,
             session_hash, mode, created_at, expires_at, failed_attempts, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, 0, 'pending')""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending')""",
         (
             token_hash(token), event_id, user_id, device_id, resource_id, actor_id,
-            _session_hash(session_id), now, now + config.CHALLENGE_TTL_SECONDS,
+            _session_hash(session_id), mode, now, now + config.CHALLENGE_TTL_SECONDS,
         ),
     )
     return {
         "id": token,
         "expires_in": config.CHALLENGE_TTL_SECONDS,
-        "method": "TOTP",
+        "method": "TOTP" if mode == LIVE else "simulated",
+        "mode": mode,
         "max_attempts": config.MFA_MAX_ATTEMPTS_PER_CHALLENGE,
     }
 
@@ -555,8 +577,52 @@ def _set_status(conn, digest: str, status: str) -> None:
     )
 
 
-def _verify_locked(conn, digest: str, code: str, actor_id: int | None,
-                   session_id: str | None) -> dict | ChallengeError:
+SIMULATION_NEEDS_OUTCOME = (
+    "This is a simulation challenge: record a simulated outcome. No authenticator "
+    "code is checked for simulations."
+)
+LIVE_REJECTS_OUTCOME = "Simulated outcomes are accepted only for simulation challenges."
+
+
+def _record_failure(conn, digest: str, *, simulated: bool = False) -> ChallengeError:
+    """Count one failed attempt on the challenge (atomically) and return the error."""
+    failed = conn.execute(
+        """UPDATE mfa_challenges
+           SET failed_attempts = failed_attempts + 1,
+               status = CASE WHEN failed_attempts + 1 >= ? THEN 'cancelled' ELSE status END
+           WHERE token_hash = ? AND status = 'pending'
+           RETURNING failed_attempts""",
+        (config.MFA_MAX_ATTEMPTS_PER_CHALLENGE, digest),
+    ).fetchone()[0]
+    remaining = config.MFA_MAX_ATTEMPTS_PER_CHALLENGE - failed
+    if simulated:
+        if remaining <= 0:
+            return ChallengeLimitError(
+                "Simulated MFA failure recorded. The attempt limit is reached and this simulation "
+                "challenge has been cancelled."
+            )
+        return ChallengeError(f"Simulated MFA failure recorded. {remaining} attempt(s) remaining.")
+    if remaining <= 0:
+        return ChallengeLimitError(
+            "Too many incorrect verification codes. This challenge has been cancelled; "
+            "submit a new access request."
+        )
+    return ChallengeError(f"Incorrect verification code. {remaining} attempt(s) remaining.")
+
+
+def _consume(conn, digest: str, now: float) -> None:
+    # Single use: only a pending, unexpired row can be consumed, exactly once.
+    consumed = conn.execute(
+        """UPDATE mfa_challenges SET status = 'consumed', consumed_at = ?
+           WHERE token_hash = ? AND status = 'pending' AND expires_at >= ?""",
+        (now, digest, now),
+    ).rowcount
+    if consumed != 1:  # cannot happen under the write lock; fail closed regardless
+        raise ChallengeError(INVALID_CHALLENGE)
+
+
+def _verify_locked(conn, digest: str, code: str | None, actor_id: int | None,
+                   session_id: str | None, simulated_outcome: str | None = None) -> dict | ChallengeError:
     """All checks and state changes of one verification, inside a write
     transaction. Returns the event row on success or the error to raise; an
     error is returned rather than raised so that its state changes (failed
@@ -585,6 +651,21 @@ def _verify_locked(conn, digest: str, code: str, actor_id: int | None,
         _set_status(conn, digest, "invalidated")
         return ChallengeError(INVALID_CHALLENGE)
 
+    if entry["mode"] == SIMULATION:
+        # The operator decides the outcome. The subject's TOTP counter and
+        # failure throttle are never touched; the per-challenge limit still
+        # applies, and the attempt is recorded for audit as a simulation.
+        if simulated_outcome not in SIMULATED_OUTCOMES:
+            return ChallengeError(SIMULATION_NEEDS_OUTCOME)
+        success = simulated_outcome == "success"
+        database.record_mfa_attempt(user["id"], success, actor_id, conn=conn, mode=SIMULATION)
+        if not success:
+            return _record_failure(conn, digest, simulated=True)
+        _consume(conn, digest, now)
+        return {**event, "_mode": SIMULATION}
+    if simulated_outcome is not None:
+        return ChallengeError(LIVE_REJECTS_OUTCOME)
+
     # Identity-wide budget: creating new challenges cannot reset it.
     failures, oldest = database.recent_mfa_failures(user["id"], config.MFA_USER_FAILURE_WINDOW_SECONDS, conn=conn)
     if failures >= config.MFA_USER_MAX_FAILURES:
@@ -601,44 +682,28 @@ def _verify_locked(conn, digest: str, code: str, actor_id: int | None,
 
     # consume_totp also rejects a time step already accepted for this user, so
     # a code observed once cannot complete a second challenge.
-    if not consume_totp(user["id"], secret, code, conn=conn):
-        failed = conn.execute(
-            """UPDATE mfa_challenges
-               SET failed_attempts = failed_attempts + 1,
-                   status = CASE WHEN failed_attempts + 1 >= ? THEN 'cancelled' ELSE status END
-               WHERE token_hash = ? AND status = 'pending'
-               RETURNING failed_attempts""",
-            (config.MFA_MAX_ATTEMPTS_PER_CHALLENGE, digest),
-        ).fetchone()[0]
+    if not consume_totp(user["id"], secret, code or "", conn=conn):
         database.record_mfa_attempt(user["id"], False, actor_id, conn=conn)
-        remaining = config.MFA_MAX_ATTEMPTS_PER_CHALLENGE - failed
-        if remaining <= 0:
-            return ChallengeLimitError(
-                "Too many incorrect verification codes. This challenge has been cancelled; "
-                "submit a new access request."
-            )
-        return ChallengeError(f"Incorrect verification code. {remaining} attempt(s) remaining.")
-
-    # Single use: only a pending, unexpired row can be consumed, exactly once.
-    consumed = conn.execute(
-        """UPDATE mfa_challenges SET status = 'consumed', consumed_at = ?
-           WHERE token_hash = ? AND status = 'pending' AND expires_at >= ?""",
-        (now, digest, now),
-    ).rowcount
-    if consumed != 1:  # cannot happen under the write lock; fail closed regardless
-        raise ChallengeError(INVALID_CHALLENGE)
+        return _record_failure(conn, digest)
+    _consume(conn, digest, now)
     database.record_mfa_attempt(user["id"], True, actor_id, conn=conn)
-    return event
+    return {**event, "_mode": LIVE}
 
 
 def verify_challenge(
     token: str,
-    code: str,
+    code: str | None = None,
     *,
     actor_id: int | None = None,
     session_id: str | None = None,
+    simulated_outcome: str | None = None,
 ) -> dict[str, Any]:
-    """Complete a step-up challenge with a TOTP code and re-evaluate the request.
+    """Complete a step-up challenge and re-evaluate the request.
+
+    A ``live`` challenge needs the subject's TOTP ``code``. A ``simulation``
+    challenge (see :func:`challenge_mode`) needs ``simulated_outcome``
+    ("success" or "failure") from the operator who issued it; supplying the
+    wrong kind of answer is rejected without counting an attempt.
 
     ``actor_id`` and ``session_id`` are the signed-in user and session
     submitting the code; they must equal the values the challenge was issued
@@ -660,10 +725,11 @@ def verify_challenge(
         raise ChallengeError(INVALID_CHALLENGE)
     with database.get_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        outcome = _verify_locked(conn, digest, code, actor_id, session_id)
+        outcome = _verify_locked(conn, digest, code, actor_id, session_id, simulated_outcome)
     if isinstance(outcome, ChallengeError):
         raise outcome
     event = outcome
+    simulated = event.pop("_mode") == SIMULATION
 
     context = json.loads(event["context"])
     context["mfa_verified"] = True
@@ -676,10 +742,17 @@ def verify_challenge(
         ground_truth=event["ground_truth"],
         scenario=event["scenario"],
     )
-    reason = {
-        "severity": "low",
-        "text": "Step-up MFA satisfied; the request was re-evaluated with the new context.",
-    }
+    if simulated:
+        reason = {
+            "severity": "low",
+            "text": "Simulated step-up outcome recorded by the operator; no authenticator code was "
+                    "checked. The request was re-evaluated as if MFA had succeeded.",
+        }
+    else:
+        reason = {
+            "severity": "low",
+            "text": "Step-up MFA satisfied; the request was re-evaluated with the new context.",
+        }
     with database.get_db() as conn:
         conn.execute(
             """UPDATE events SET decision = ?, risk_score = ?, base_risk = ?, anomaly_score = ?,
@@ -694,13 +767,14 @@ def verify_challenge(
                 json.dumps(re_evaluated["reasons"] + [reason]),
                 json.dumps(re_evaluated["context"]),
                 re_evaluated["latency_ms"],
-                "step_up_verified",
+                "step_up_simulated" if simulated else "step_up_verified",
                 event["id"],
             ),
         )
     re_evaluated["event_id"] = event["id"]
     re_evaluated["reasons"] = re_evaluated["reasons"] + [reason]
     re_evaluated["step_up"] = True
+    re_evaluated["step_up_mode"] = SIMULATION if simulated else LIVE
     return re_evaluated
 
 
@@ -787,4 +861,3 @@ def _public_resource(resource: dict) -> dict:
         "sensitivity": resource["sensitivity"],
         "owner": resource["owner"],
     }
-

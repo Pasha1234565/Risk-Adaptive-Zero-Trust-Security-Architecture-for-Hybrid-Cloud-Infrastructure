@@ -147,6 +147,7 @@
         ["Resource", event.resource_name + " · " + event.resource_sensitivity],
         ["Zone", event.resource_zone],
         ["Scenario", event.scenario],
+        ["Mode", event.simulated ? "Simulation (no real sign-in or MFA check)" : "Live"],
         ["Ground truth", event.ground_truth ? "Attack" : "Normal"],
         ["Source IP", event.source_ip],
         ["Geolocation", event.geo],

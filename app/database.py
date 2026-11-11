@@ -151,12 +151,15 @@ CREATE TABLE IF NOT EXISTS totp_counters (
 -- Step-up MFA verification outcomes per identity, used for throttling and
 -- audit. user_id is the identity whose code was checked; actor_user_id is the
 -- signed-in user who submitted it (when known). Codes are never stored.
+-- mode 'simulation' rows record an operator's simulated outcome; they are kept
+-- for audit and never count towards the identity's throttle.
 CREATE TABLE IF NOT EXISTS mfa_attempts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id       INTEGER NOT NULL REFERENCES users(id),
     actor_user_id INTEGER REFERENCES users(id),
     ts            TEXT NOT NULL,
-    success       INTEGER NOT NULL
+    success       INTEGER NOT NULL,
+    mode          TEXT NOT NULL DEFAULT 'live'
 );
 
 CREATE INDEX IF NOT EXISTS idx_mfa_attempts_user_ts ON mfa_attempts(user_id, ts);
@@ -196,6 +199,7 @@ def utcnow() -> str:
 # their data and get NULL in the new column.
 COLUMN_MIGRATIONS = [
     ("events", "actor_user_id", "INTEGER REFERENCES users(id)"),
+    ("mfa_attempts", "mode", "TEXT NOT NULL DEFAULT 'live'"),
 ]
 
 
@@ -349,30 +353,32 @@ def advance_totp_counter(user_id: int, counter: int, conn: sqlite3.Connection | 
 
 
 def record_mfa_attempt(user_id: int, success: bool, actor_user_id: int | None = None,
-                       conn: sqlite3.Connection | None = None) -> None:
+                       conn: sqlite3.Connection | None = None, *, mode: str = "live") -> None:
     with _using(conn) as conn:
         conn.execute(
-            "INSERT INTO mfa_attempts (user_id, actor_user_id, ts, success) VALUES (?, ?, ?, ?)",
-            (int(user_id), actor_user_id, utcnow(), 1 if success else 0),
+            "INSERT INTO mfa_attempts (user_id, actor_user_id, ts, success, mode) VALUES (?, ?, ?, ?, ?)",
+            (int(user_id), actor_user_id, utcnow(), 1 if success else 0, mode),
         )
 
 
 def recent_mfa_failures(user_id: int, window_seconds: int,
                         conn: sqlite3.Connection | None = None) -> tuple[int, str | None]:
     """Failed verifications for ``user_id`` inside the window, counted only
-    since the identity's last successful verification.
+    since the identity's last successful verification. Only real ('live')
+    verifications count: simulated outcomes never throttle or reset anyone.
 
     Returns ``(count, oldest_counted_failure_ts)``.
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat(timespec="seconds")
     with _using(conn) as conn:
         last_success = conn.execute(
-            "SELECT MAX(ts) AS ts FROM mfa_attempts WHERE user_id = ? AND success = 1", (int(user_id),)
+            "SELECT MAX(ts) AS ts FROM mfa_attempts WHERE user_id = ? AND success = 1 AND mode = 'live'",
+            (int(user_id),),
         ).fetchone()["ts"]
         since = max(cutoff, last_success) if last_success else cutoff
         found = conn.execute(
             "SELECT COUNT(*) AS n, MIN(ts) AS oldest FROM mfa_attempts "
-            "WHERE user_id = ? AND success = 0 AND ts > ?",
+            "WHERE user_id = ? AND success = 0 AND mode = 'live' AND ts > ?",
             (int(user_id), since),
         ).fetchone()
     return int(found["n"]), found["oldest"]

@@ -224,7 +224,8 @@ def test_attempt_records_hold_no_codes():
 
     with database.get_db() as conn:
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(mfa_attempts)")]
-    assert columns == ["id", "user_id", "actor_user_id", "ts", "success"]
+    # Phase 2.2 added "mode" (live/simulation); still no column can hold a code.
+    assert columns == ["id", "user_id", "actor_user_id", "ts", "success", "mode"]
     assert _attempts(user)[-1]["actor_user_id"] == user["id"]
 
 

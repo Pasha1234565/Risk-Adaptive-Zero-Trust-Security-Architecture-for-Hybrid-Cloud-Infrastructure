@@ -173,7 +173,9 @@
               window.ZT.decisionBadge(result.decision) +
               '<span class="chip">Event #' + window.ZT.escape(result.event_id || "—") + "</span>" +
               '<span class="chip">' + window.ZT.escape(window.ZT.fmtTime(result.ts)) + "</span>" +
-              (result.step_up ? '<span class="chip">Step-up verified</span>' : "") +
+              (result.step_up
+                ? '<span class="chip">' + (result.step_up_mode === "simulation" ? "Step-up simulated" : "Step-up verified") + "</span>"
+                : "") +
             "</div>" +
           "</div>" +
           '<div class="gauge-wrap" id="risk-gauge"></div>' +
@@ -234,7 +236,24 @@
     return document.body.dataset.demoTotp === "on";
   }
 
+  function simulationChallengeHtml(result) {
+    return (
+      '<div class="challenge-box" id="simulation-challenge">' +
+        "<h3>Simulated step-up authentication</h3>" +
+        "<p>This request was evaluated for " + window.ZT.escape(result.user ? result.user.name : "another identity") +
+          " as a simulation. No authenticator code is checked and the identity's real MFA state is not " +
+          "touched: record the outcome you want to simulate. It is logged against your account.</p>" +
+        '<div class="challenge-form">' +
+          '<button class="btn btn-primary small" id="simulate-success">Simulate MFA success</button>' +
+          '<button class="btn btn-ghost small" id="simulate-failure">Simulate MFA failure</button>' +
+          '<span class="challenge-hint" id="challenge-hint">Simulated outcomes are recorded as simulations in the event log.</span>' +
+        "</div>" +
+      "</div>"
+    );
+  }
+
   function challengeHtml(result) {
+    if (result.challenge && result.challenge.mode === "simulation") return simulationChallengeHtml(result);
     const enrolled = result.user && result.user.mfa_enabled;
     const demo = demoTotpAvailable();
     return (
@@ -257,7 +276,39 @@
     );
   }
 
+  function bindSimulation() {
+    const buttons = [document.getElementById("simulate-success"), document.getElementById("simulate-failure")];
+    buttons.forEach(function (button) {
+      if (!button) return;
+      button.addEventListener("click", async function () {
+        const outcome = button.id === "simulate-success" ? "success" : "failure";
+        window.ZT.setLoading(button, true, "Recording…");
+        try {
+          const updated = await window.ZT.api("/api/access/challenge", {
+            method: "POST",
+            body: { challenge_id: state.challengeId, simulated_outcome: outcome },
+          });
+          window.ZT.toast("Simulated MFA success recorded. Request re-evaluated.", "ok");
+          renderResult(updated);
+          refreshRecent();
+          window.ZT.refreshAlertBadge();
+        } catch (err) {
+          window.ZT.toast(err.message, err.status === 400 ? "warn" : "error");
+          window.ZT.setLoading(button, false);
+          document.getElementById("challenge-hint").textContent = err.message;
+          if (err.status === 429) {
+            buttons.forEach(function (item) { if (item) item.disabled = true; });
+          }
+        }
+      });
+    });
+  }
+
   function bindChallenge(result) {
+    if (result.challenge && result.challenge.mode === "simulation") {
+      bindSimulation();
+      return;
+    }
     const verify = document.getElementById("verify-mfa");
     const demo = document.getElementById("demo-code");
     if (!verify) return;

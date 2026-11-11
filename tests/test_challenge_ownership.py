@@ -200,8 +200,12 @@ def test_simulated_challenge_belongs_to_the_operator_session(make_client):
     assert entry["actor_user_id"] != entry["user_id"]
     # The subject's own session did not request it, so it cannot answer it ...
     assert _submit(subject, token, _code()).status_code == 400
-    # ... while the operator session can, with the subject's authenticator code.
-    assert _submit(admin, token, _code()).status_code == 200
+    # ... while the operator session can. Since Phase 2.2 a simulation is
+    # answered with a simulated outcome, never with the subject's real code.
+    assert subject.post("/api/access/challenge",
+                        json={"challenge_id": token, "simulated_outcome": "success"}).status_code == 403
+    assert admin.post("/api/access/challenge",
+                      json={"challenge_id": token, "simulated_outcome": "success"}).status_code == 200
 
 
 def test_engine_level_challenges_without_an_actor_are_not_answerable_over_http(make_client):

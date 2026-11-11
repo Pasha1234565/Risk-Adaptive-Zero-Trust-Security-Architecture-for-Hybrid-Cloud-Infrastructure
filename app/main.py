@@ -17,13 +17,13 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from . import __version__, anomaly, config, database, evaluation, mfa_crypto, risk, security, seed, simulator
 
@@ -513,8 +513,18 @@ class AccessPayload(BaseModel):
 
 
 class ChallengePayload(BaseModel):
+    """Answer to a step-up challenge: a TOTP ``code`` for a live challenge, or
+    a ``simulated_outcome`` for a simulation challenge. Exactly one is allowed."""
+
     challenge_id: str = Field(min_length=8, max_length=200)
-    code: str = Field(min_length=6, max_length=6)
+    code: str | None = Field(default=None, min_length=6, max_length=6)
+    simulated_outcome: Literal["success", "failure"] | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_answer(self) -> "ChallengePayload":
+        if (self.code is None) == (self.simulated_outcome is None):
+            raise ValueError("Provide either code or simulated_outcome")
+        return self
 
 
 @app.post("/api/access/evaluate")
@@ -556,9 +566,18 @@ def complete_challenge(payload: ChallengePayload, request: Request):
     # Ownership comes from the authenticated session, never from the request
     # body: only the user and session that triggered the challenge may answer it.
     user, session_id = require_principal(request)
+    # Only simulation operators may record simulated outcomes. (Simulation
+    # challenges are only ever issued to operators, and verify_challenge also
+    # requires the issuing actor and session.)
+    if payload.simulated_outcome is not None and not can_simulate(user):
+        raise HTTPException(status_code=403, detail=SIMULATION_FORBIDDEN)
     try:
         return risk.verify_challenge(
-            payload.challenge_id, payload.code, actor_id=user["id"], session_id=session_id
+            payload.challenge_id,
+            payload.code,
+            actor_id=user["id"],
+            session_id=session_id,
+            simulated_outcome=payload.simulated_outcome,
         )
     except risk.ChallengeLimitError as exc:
         headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
@@ -713,6 +732,7 @@ def list_events(
         item["reasons"] = _safe_json(item["reasons"], [])
         item["context"] = _safe_json(item["context"], {})
         item["ground_truth"] = bool(item["ground_truth"])
+        item["simulated"] = _is_simulated(item)
     return {"events": rows, "total": total, "limit": limit, "offset": offset}
 
 
@@ -742,6 +762,7 @@ def get_event(event_id: int, request: Request):
     for key in ("signals", "reasons", "context"):
         item[key] = _safe_json(item[key], [] if key != "context" else {})
     item["ground_truth"] = bool(item["ground_truth"])
+    item["simulated"] = _is_simulated(item)
     return item
 
 
@@ -830,7 +851,8 @@ def dashboard(request: Request):
         recent = database.rows(
             conn,
             f"""SELECT e.id, e.ts, e.decision, e.risk_score, e.anomaly_score, e.scenario,
-                      e.ground_truth, u.name AS user_name, r.name AS resource_name,
+                      e.ground_truth, e.user_id, e.actor_user_id, e.outcome,
+                      u.name AS user_name, r.name AS resource_name,
                       r.zone AS resource_zone, d.name AS device_name
                FROM events e LEFT JOIN users u ON u.id = e.user_id
                LEFT JOIN resources r ON r.id = e.resource_id
@@ -856,6 +878,8 @@ def dashboard(request: Request):
                FROM events WHERE ts >= ?{mine} GROUP BY substr(ts, 12, 2) ORDER BY hour""",
             [cutoff] + me_param,
         )
+    for item in recent:
+        item["simulated"] = _is_simulated(item)
     bins = [0, 0, 0, 0, 0]
     for row in risk_rows:
         index = min(4, int(float(row["risk_score"]) // 20))
@@ -900,6 +924,13 @@ def dashboard(request: Request):
         "model": anomaly.get_model().metadata(),
         "latest_eval_id": latest_eval["id"] if latest_eval else None,
     }
+
+
+def _is_simulated(event: dict[str, Any]) -> bool:
+    """True for simulator traffic and for evaluations an operator ran on behalf
+    of another identity; such events never reflect a real sign-in or MFA check."""
+    actor = event.get("actor_user_id")
+    return event.get("scenario") != "live" or (actor is not None and actor != event.get("user_id"))
 
 
 def _safe_json(value: Any, fallback: Any) -> Any:
