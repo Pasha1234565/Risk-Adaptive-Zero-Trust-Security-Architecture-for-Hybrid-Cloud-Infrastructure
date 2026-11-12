@@ -222,12 +222,43 @@ def init_db() -> list[str]:
         return _migrate_columns(conn)
 
 
+WAL_RETRY_SECONDS = 15.0
+
+
+def _enable_wal(conn: sqlite3.Connection) -> None:
+    """Switch the database to WAL mode, tolerating concurrent start-up.
+
+    WAL is a persistent property of the database file, so this is a no-op once
+    any connection has set it. While several worker processes open a brand-new
+    file at the same moment, SQLite can answer the mode change with "database
+    is locked" immediately, without waiting for the busy timeout, so the
+    switch is retried with a short back-off instead of failing start-up.
+    """
+    deadline = time.monotonic() + WAL_RETRY_SECONDS
+    delay = 0.02
+    while True:
+        try:
+            if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            message = str(exc).lower()
+            if ("locked" not in message and "busy" not in message) or time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+
+
 @contextmanager
 def get_db() -> Iterator[sqlite3.Connection]:
     config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        _enable_wal(conn)
+    except Exception:
+        conn.close()
+        raise
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
