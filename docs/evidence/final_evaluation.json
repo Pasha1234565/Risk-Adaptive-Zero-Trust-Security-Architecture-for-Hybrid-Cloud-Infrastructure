@@ -1,0 +1,1518 @@
+{
+  "label": "run1",
+  "evaluated_at": "2026-11-12T01:48:54+00:00",
+  "environment": {
+    "python": "3.13.5",
+    "platform": "Windows-11-10.0.22631-SP0",
+    "processor": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "pbkdf2_iterations": 120000
+  },
+  "configuration": {
+    "normal_samples": 140,
+    "variants_per_scenario": 3,
+    "normal_seed": 2026,
+    "model_seed": 7,
+    "model_samples": 1200,
+    "model_contamination": 0.04,
+    "anomaly_threshold": 0.7862,
+    "thresholds": {
+      "allow_max": 40.0,
+      "challenge_max": 60.0,
+      "restrict_max": 80.0
+    },
+    "weights": {
+      "behaviour": 30.0,
+      "device": 20.0,
+      "identity": 12.0,
+      "resource": 14.0,
+      "request": 14.0,
+      "session": 10.0
+    }
+  },
+  "evaluation_wall_seconds": 2.94,
+  "metrics": {
+    "name": "Final evaluation",
+    "generated_at": "2026-11-12T01:48:51+00:00",
+    "samples": {
+      "total": 176,
+      "normal": 140,
+      "attack": 36
+    },
+    "detection": {
+      "accuracy": 0.9261,
+      "precision": 0.7347,
+      "recall": 1.0,
+      "f1": 0.8471,
+      "false_positive_rate": 0.0929,
+      "false_negative_rate": 0.0,
+      "tp": 36,
+      "fp": 13,
+      "tn": 127,
+      "fn": 0,
+      "total": 176
+    },
+    "anomaly_detection": {
+      "accuracy": 0.9148,
+      "precision": 0.7059,
+      "recall": 1.0,
+      "f1": 0.8276,
+      "false_positive_rate": 0.1071,
+      "false_negative_rate": 0.0,
+      "tp": 36,
+      "fp": 15,
+      "tn": 125,
+      "fn": 0,
+      "total": 176
+    },
+    "decisions": {
+      "ALLOW": 127,
+      "CHALLENGE": 15,
+      "RESTRICT": 10,
+      "BLOCK": 24
+    },
+    "latency": {
+      "decision_avg_ms": 13.57,
+      "decision_p50_ms": 13.52,
+      "decision_p95_ms": 13.92,
+      "decision_max_ms": 15.93,
+      "auth_overhead_ms": 48.364,
+      "service_latency_ms": 1.518
+    },
+    "availability": {
+      "successful": 176,
+      "total": 176,
+      "rate": 100.0,
+      "engine_errors": 0
+    },
+    "model": {
+      "algorithm": "IsolationForest + contextual rules",
+      "threshold": 0.7862,
+      "trained_at": "2026-11-12T01:48:48Z",
+      "baseline_samples": 1200
+    },
+    "per_scenario": [
+      {
+        "id": "impossible_travel",
+        "name": "Impossible Travel",
+        "technique": "T1078 \u00b7 Valid Accounts",
+        "severity": "high",
+        "decision": "BLOCK",
+        "risk_score": 86.5,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "credential_stuffing",
+        "name": "Credential Stuffing",
+        "technique": "T1110.004 \u00b7 Credential Stuffing",
+        "severity": "high",
+        "decision": "RESTRICT",
+        "risk_score": 78.0,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "brute_force",
+        "name": "Distributed Brute Force",
+        "technique": "T1110.001 \u00b7 Password Guessing",
+        "severity": "high",
+        "decision": "BLOCK",
+        "risk_score": 86.8,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "compromised_device",
+        "name": "Compromised Developer Endpoint",
+        "technique": "T1078 + T1021 \u00b7 Remote Services",
+        "severity": "critical",
+        "decision": "BLOCK",
+        "risk_score": 86.1,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "insider_exfiltration",
+        "name": "Insider Data Exfiltration",
+        "technique": "T1567 \u00b7 Exfiltration Over Web Service",
+        "severity": "critical",
+        "decision": "CHALLENGE",
+        "risk_score": 57.8,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": false
+      },
+      {
+        "id": "privilege_escalation",
+        "name": "Privilege Escalation",
+        "technique": "T1078.004 \u00b7 Cloud Accounts",
+        "severity": "critical",
+        "decision": "BLOCK",
+        "risk_score": 100.0,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "mfa_fatigue",
+        "name": "MFA Fatigue",
+        "technique": "T1621 \u00b7 Multi-Factor Authentication Request Generation",
+        "severity": "high",
+        "decision": "BLOCK",
+        "risk_score": 83.2,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "rogue_service_account",
+        "name": "Rogue Service Account",
+        "technique": "T1078.004 \u00b7 Cloud Accounts",
+        "severity": "critical",
+        "decision": "BLOCK",
+        "risk_score": 87.0,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "off_hours_drift",
+        "name": "Off-Hours Access Drift",
+        "technique": "T1078 \u00b7 Valid Accounts",
+        "severity": "medium",
+        "decision": "CHALLENGE",
+        "risk_score": 48.7,
+        "anomaly_score": 0.9843,
+        "detected": true,
+        "contained": false
+      },
+      {
+        "id": "unmanaged_contractor",
+        "name": "Unmanaged Contractor Device",
+        "technique": "T1200 \u00b7 Hardware Additions",
+        "severity": "medium",
+        "decision": "RESTRICT",
+        "risk_score": 71.0,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "lateral_movement",
+        "name": "Lateral Movement",
+        "technique": "T1021 \u00b7 Remote Services",
+        "severity": "high",
+        "decision": "BLOCK",
+        "risk_score": 89.5,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      },
+      {
+        "id": "api_abuse",
+        "name": "API Abuse / Key Misuse",
+        "technique": "T1496 \u00b7 Resource Hijacking",
+        "severity": "high",
+        "decision": "BLOCK",
+        "risk_score": 84.7,
+        "anomaly_score": 1.0,
+        "detected": true,
+        "contained": true
+      }
+    ],
+    "duration_ms": 2935.5
+  },
+  "isolation_forest_only": {
+    "accuracy": 0.9148,
+    "precision": 0.7059,
+    "recall": 1.0,
+    "f1": 0.8276,
+    "false_positive_rate": 0.1071,
+    "false_negative_rate": 0.0,
+    "tp": 36,
+    "fp": 15,
+    "tn": 125,
+    "fn": 0,
+    "total": 176
+  },
+  "scenarios": [
+    {
+      "id": "impossible_travel",
+      "name": "Impossible Travel",
+      "technique": "T1078 \u00b7 Valid Accounts",
+      "severity": "high",
+      "ground_truth": "attack (1)",
+      "subject": "admin",
+      "device": "iPhone 15 (personal)",
+      "resource": "identity-provider",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "London, UK",
+            "hour": 3,
+            "requests_last_5m": 12.0,
+            "failed_attempts_24h": 1.0,
+            "bytes_out_mb": 24.0,
+            "session_minutes": 45.0,
+            "concurrent_sessions": 3.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 86.5,
+          "base_risk": 71.5,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 78.62\u03c3 above the user's baseline (8035.1 vs 73.81).",
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Device trust 62 is below the policy requirement of 85."
+          ]
+        },
+        {
+          "context": {
+            "geo": "London, UK",
+            "hour": 3,
+            "requests_last_5m": 14.7,
+            "failed_attempts_24h": 1.0,
+            "bytes_out_mb": 31.3,
+            "session_minutes": 45.0,
+            "concurrent_sessions": 3.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 86.5,
+          "base_risk": 71.5,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 78.62\u03c3 above the user's baseline (8035.1 vs 73.81).",
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Device trust 62 is below the policy requirement of 85."
+          ]
+        },
+        {
+          "context": {
+            "geo": "London, UK",
+            "hour": 3,
+            "requests_last_5m": 11.2,
+            "failed_attempts_24h": 1.0,
+            "bytes_out_mb": 22.9,
+            "session_minutes": 45.0,
+            "concurrent_sessions": 3.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 86.5,
+          "base_risk": 71.5,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 78.62\u03c3 above the user's baseline (8035.1 vs 73.81).",
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Device trust 62 is below the policy requirement of 85."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "credential_stuffing",
+      "name": "Credential Stuffing",
+      "technique": "T1110.004 \u00b7 Credential Stuffing",
+      "severity": "high",
+      "ground_truth": "attack (1)",
+      "subject": "analyst",
+      "device": "AISHA-LT-02",
+      "resource": "internal-wiki",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 65.0,
+            "failed_attempts_24h": 12.0,
+            "bytes_out_mb": 8.0,
+            "session_minutes": 5.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 78.0,
+          "base_risk": 58.0,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "RESTRICT",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81).",
+            "Requests / 5 min is 23.83\u03c3 above the user's baseline (65.0 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 64.3,
+            "failed_attempts_24h": 13.0,
+            "bytes_out_mb": 7.8,
+            "session_minutes": 5.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 78.0,
+          "base_risk": 58.0,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "RESTRICT",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81).",
+            "Requests / 5 min is 23.55\u03c3 above the user's baseline (64.3 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 63.4,
+            "failed_attempts_24h": 10.0,
+            "bytes_out_mb": 9.5,
+            "session_minutes": 5.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 78.0,
+          "base_risk": 58.0,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "RESTRICT",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81).",
+            "Requests / 5 min is 23.19\u03c3 above the user's baseline (63.4 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "brute_force",
+      "name": "Distributed Brute Force",
+      "technique": "T1110.001 \u00b7 Password Guessing",
+      "severity": "high",
+      "ground_truth": "attack (1)",
+      "subject": "finance",
+      "device": "PRIYA-LT-03",
+      "resource": "hr-portal",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Ashburn, US",
+            "hour": 2,
+            "requests_last_5m": 80.0,
+            "failed_attempts_24h": 14.0,
+            "bytes_out_mb": 6.0,
+            "session_minutes": 2.0,
+            "concurrent_sessions": 2.0,
+            "new_device": true,
+            "mfa_verified": false,
+            "threat_intel": "malicious"
+          },
+          "risk_score": 86.8,
+          "base_risk": 66.8,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 134.36\u03c3 above the user's baseline (13679.7 vs 73.81).",
+            "Requests / 5 min is 29.76\u03c3 above the user's baseline (80.0 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Ashburn, US",
+            "hour": 2,
+            "requests_last_5m": 97.1,
+            "failed_attempts_24h": 15.0,
+            "bytes_out_mb": 6.8,
+            "session_minutes": 2.0,
+            "concurrent_sessions": 2.0,
+            "new_device": true,
+            "mfa_verified": false,
+            "threat_intel": "malicious"
+          },
+          "risk_score": 86.8,
+          "base_risk": 66.8,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 134.36\u03c3 above the user's baseline (13679.7 vs 73.81).",
+            "Requests / 5 min is 36.52\u03c3 above the user's baseline (97.1 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Ashburn, US",
+            "hour": 2,
+            "requests_last_5m": 69.0,
+            "failed_attempts_24h": 17.0,
+            "bytes_out_mb": 7.9,
+            "session_minutes": 2.0,
+            "concurrent_sessions": 2.0,
+            "new_device": true,
+            "mfa_verified": false,
+            "threat_intel": "malicious"
+          },
+          "risk_score": 86.8,
+          "base_risk": 66.8,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 134.36\u03c3 above the user's baseline (13679.7 vs 73.81).",
+            "Failed logins (24 h) is 27.18\u03c3 above the user's baseline (17.0 vs 0.37).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "compromised_device",
+      "name": "Compromised Developer Endpoint",
+      "technique": "T1078 + T1021 \u00b7 Remote Services",
+      "severity": "critical",
+      "ground_truth": "attack (1)",
+      "subject": "dev",
+      "device": "ROHAN-LT-07",
+      "resource": "k8s-prod",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 2,
+            "requests_last_5m": 22.0,
+            "failed_attempts_24h": 6.0,
+            "bytes_out_mb": 480.0,
+            "session_minutes": 140.0,
+            "concurrent_sessions": 4.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 86.1,
+          "base_risk": 71.1,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Egress volume (MB) is 39.97\u03c3 above the user's baseline (480.0 vs 20.86).",
+            "Failed logins (24 h) is 9.2\u03c3 above the user's baseline (6.0 vs 0.37).",
+            "Device trust 68 is below the policy requirement of 85."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 2,
+            "requests_last_5m": 19.1,
+            "failed_attempts_24h": 6.0,
+            "bytes_out_mb": 388.6,
+            "session_minutes": 140.0,
+            "concurrent_sessions": 4.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 85.8,
+          "base_risk": 70.8,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Egress volume (MB) is 32.01\u03c3 above the user's baseline (388.6 vs 20.86).",
+            "Failed logins (24 h) is 9.2\u03c3 above the user's baseline (6.0 vs 0.37).",
+            "Device trust 68 is below the policy requirement of 85."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 2,
+            "requests_last_5m": 17.8,
+            "failed_attempts_24h": 6.0,
+            "bytes_out_mb": 556.3,
+            "session_minutes": 140.0,
+            "concurrent_sessions": 4.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 85.7,
+          "base_risk": 70.7,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Egress volume (MB) is 46.61\u03c3 above the user's baseline (556.3 vs 20.86).",
+            "Failed logins (24 h) is 9.2\u03c3 above the user's baseline (6.0 vs 0.37).",
+            "Device trust 68 is below the policy requirement of 85."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "insider_exfiltration",
+      "name": "Insider Data Exfiltration",
+      "technique": "T1567 \u00b7 Exfiltration Over Web Service",
+      "severity": "critical",
+      "ground_truth": "attack (1)",
+      "subject": "finance",
+      "device": "PRIYA-LT-03",
+      "resource": "analytics-lake",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 40.0,
+            "failed_attempts_24h": 3.0,
+            "bytes_out_mb": 950.0,
+            "session_minutes": 480.0,
+            "concurrent_sessions": 5.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 57.8,
+          "base_risk": 57.8,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "CHALLENGE",
+          "detected": true,
+          "contained": false,
+          "top_reasons": [
+            "Egress volume (MB) is 80.88\u03c3 above the user's baseline (950.0 vs 20.86).",
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81)."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 42.1,
+            "failed_attempts_24h": 3.0,
+            "bytes_out_mb": 1148.3,
+            "session_minutes": 480.0,
+            "concurrent_sessions": 5.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 57.8,
+          "base_risk": 57.8,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "CHALLENGE",
+          "detected": true,
+          "contained": false,
+          "top_reasons": [
+            "Egress volume (MB) is 98.14\u03c3 above the user's baseline (1148.3 vs 20.86).",
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81)."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 43.4,
+            "failed_attempts_24h": 2.0,
+            "bytes_out_mb": 740.6,
+            "session_minutes": 480.0,
+            "concurrent_sessions": 5.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 57.8,
+          "base_risk": 57.8,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "CHALLENGE",
+          "detected": true,
+          "contained": false,
+          "top_reasons": [
+            "Egress volume (MB) is 62.65\u03c3 above the user's baseline (740.6 vs 20.86).",
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81)."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "privilege_escalation",
+      "name": "Privilege Escalation",
+      "technique": "T1078.004 \u00b7 Cloud Accounts",
+      "severity": "critical",
+      "ground_truth": "attack (1)",
+      "subject": "contractor",
+      "device": "CONTRACTOR-LT-11",
+      "resource": "k8s-prod",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 14,
+            "requests_last_5m": 20.0,
+            "failed_attempts_24h": 2.0,
+            "bytes_out_mb": 20.0,
+            "session_minutes": 30.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 100.0,
+          "base_risk": 70.1,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Requests / 5 min is 6.03\u03c3 above the user's baseline (20.0 vs 4.75).",
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Least privilege: role 'contractor' is not permitted to access orchestration resources under policy 'Baseline verified-device access'."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 14,
+            "requests_last_5m": 16.8,
+            "failed_attempts_24h": 1.0,
+            "bytes_out_mb": 17.2,
+            "session_minutes": 30.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 100.0,
+          "base_risk": 69.3,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Requests / 5 min is 4.76\u03c3 above the user's baseline (16.8 vs 4.75).",
+            "Least privilege: role 'contractor' is not permitted to access orchestration resources under policy 'Baseline verified-device access'."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 14,
+            "requests_last_5m": 15.0,
+            "failed_attempts_24h": 2.0,
+            "bytes_out_mb": 15.5,
+            "session_minutes": 30.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 100.0,
+          "base_risk": 69.7,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Requests / 5 min is 4.05\u03c3 above the user's baseline (15.0 vs 4.75).",
+            "Least privilege: role 'contractor' is not permitted to access orchestration resources under policy 'Baseline verified-device access'."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mfa_fatigue",
+      "name": "MFA Fatigue",
+      "technique": "T1621 \u00b7 Multi-Factor Authentication Request Generation",
+      "severity": "high",
+      "ground_truth": "attack (1)",
+      "subject": "analyst",
+      "device": "AISHA-LT-02",
+      "resource": "api-gateway",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 23,
+            "requests_last_5m": 30.0,
+            "failed_attempts_24h": 8.0,
+            "bytes_out_mb": 14.0,
+            "session_minutes": 40.0,
+            "concurrent_sessions": 8.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 83.2,
+          "base_risk": 63.2,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Failed logins (24 h) is 12.47\u03c3 above the user's baseline (8.0 vs 0.37).",
+            "Requests / 5 min is 9.98\u03c3 above the user's baseline (30.0 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 23,
+            "requests_last_5m": 28.8,
+            "failed_attempts_24h": 7.0,
+            "bytes_out_mb": 19.4,
+            "session_minutes": 40.0,
+            "concurrent_sessions": 8.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 82.6,
+          "base_risk": 62.6,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Failed logins (24 h) is 10.84\u03c3 above the user's baseline (7.0 vs 0.37).",
+            "Requests / 5 min is 9.51\u03c3 above the user's baseline (28.8 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 23,
+            "requests_last_5m": 29.6,
+            "failed_attempts_24h": 8.0,
+            "bytes_out_mb": 17.9,
+            "session_minutes": 40.0,
+            "concurrent_sessions": 8.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 83.2,
+          "base_risk": 63.2,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Failed logins (24 h) is 12.47\u03c3 above the user's baseline (8.0 vs 0.37).",
+            "Requests / 5 min is 9.83\u03c3 above the user's baseline (29.6 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rogue_service_account",
+      "name": "Rogue Service Account",
+      "technique": "T1078.004 \u00b7 Cloud Accounts",
+      "severity": "critical",
+      "ground_truth": "attack (1)",
+      "subject": "svc-backup",
+      "device": "backup-runner-01",
+      "resource": "backup-vault",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Ashburn, US",
+            "hour": 2,
+            "requests_last_5m": 50.0,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 600.0,
+            "session_minutes": 90.0,
+            "concurrent_sessions": 3.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "malicious"
+          },
+          "risk_score": 87.0,
+          "base_risk": 69.0,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 134.36\u03c3 above the user's baseline (13679.7 vs 73.81).",
+            "Egress volume (MB) is 50.41\u03c3 above the user's baseline (600.0 vs 20.86).",
+            "Least privilege: role 'service' is not permitted to access storage resources under policy 'Baseline verified-device access'."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Ashburn, US",
+            "hour": 2,
+            "requests_last_5m": 43.6,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 816.8,
+            "session_minutes": 90.0,
+            "concurrent_sessions": 3.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "malicious"
+          },
+          "risk_score": 87.0,
+          "base_risk": 69.0,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 134.36\u03c3 above the user's baseline (13679.7 vs 73.81).",
+            "Egress volume (MB) is 69.28\u03c3 above the user's baseline (816.8 vs 20.86).",
+            "Least privilege: role 'service' is not permitted to access storage resources under policy 'Baseline verified-device access'."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Ashburn, US",
+            "hour": 2,
+            "requests_last_5m": 57.0,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 680.3,
+            "session_minutes": 90.0,
+            "concurrent_sessions": 3.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "malicious"
+          },
+          "risk_score": 87.0,
+          "base_risk": 69.0,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 134.36\u03c3 above the user's baseline (13679.7 vs 73.81).",
+            "Egress volume (MB) is 57.4\u03c3 above the user's baseline (680.3 vs 20.86).",
+            "Least privilege: role 'service' is not permitted to access storage resources under policy 'Baseline verified-device access'."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "off_hours_drift",
+      "name": "Off-Hours Access Drift",
+      "technique": "T1078 \u00b7 Valid Accounts",
+      "severity": "medium",
+      "ground_truth": "attack (1)",
+      "subject": "analyst",
+      "device": "AISHA-LT-02",
+      "resource": "backup-vault",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 3,
+            "requests_last_5m": 8.0,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 80.0,
+            "session_minutes": 60.0,
+            "concurrent_sessions": 1.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 48.7,
+          "base_risk": 48.7,
+          "anomaly_score": 0.9843,
+          "anomaly_flag": true,
+          "isolation_score": 0.9843,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "CHALLENGE",
+          "detected": true,
+          "contained": false,
+          "top_reasons": [
+            "Egress volume (MB) is 5.15\u03c3 above the user's baseline (80.0 vs 20.86).",
+            "Resource sensitivity is 1.32\u03c3 above the user's baseline (4.0 vs 2.52)."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 3,
+            "requests_last_5m": 9.8,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 100.6,
+            "session_minutes": 60.0,
+            "concurrent_sessions": 1.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 49.3,
+          "base_risk": 49.3,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "CHALLENGE",
+          "detected": true,
+          "contained": false,
+          "top_reasons": [
+            "Egress volume (MB) is 6.94\u03c3 above the user's baseline (100.6 vs 20.86).",
+            "Requests / 5 min is 2.0\u03c3 above the user's baseline (9.8 vs 4.75)."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 3,
+            "requests_last_5m": 9.1,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 110.4,
+            "session_minutes": 60.0,
+            "concurrent_sessions": 1.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 49.3,
+          "base_risk": 49.3,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "CHALLENGE",
+          "detected": true,
+          "contained": false,
+          "top_reasons": [
+            "Egress volume (MB) is 7.79\u03c3 above the user's baseline (110.4 vs 20.86).",
+            "Requests / 5 min is 1.72\u03c3 above the user's baseline (9.1 vs 4.75)."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unmanaged_contractor",
+      "name": "Unmanaged Contractor Device",
+      "technique": "T1200 \u00b7 Hardware Additions",
+      "severity": "medium",
+      "ground_truth": "attack (1)",
+      "subject": "contractor",
+      "device": "CONTRACTOR-LT-11",
+      "resource": "internal-wiki",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 11,
+            "requests_last_5m": 6.0,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 12.0,
+            "session_minutes": 25.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 71.0,
+          "base_risk": 56.0,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "RESTRICT",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Geo distance from home is 2.14\u03c3 above the user's baseline (290.2 vs 73.81).",
+            "Device trust 38 is below the policy requirement of 45."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 11,
+            "requests_last_5m": 4.7,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 8.7,
+            "session_minutes": 25.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 70.9,
+          "base_risk": 55.9,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "RESTRICT",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Geo distance from home is 2.14\u03c3 above the user's baseline (290.2 vs 73.81).",
+            "Device trust 38 is below the policy requirement of 45."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Chennai, IN",
+            "hour": 11,
+            "requests_last_5m": 6.3,
+            "failed_attempts_24h": 0.0,
+            "bytes_out_mb": 8.4,
+            "session_minutes": 25.0,
+            "concurrent_sessions": 1.0,
+            "new_device": true,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 71.1,
+          "base_risk": 56.1,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "RESTRICT",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "New device is 5.86\u03c3 above the user's baseline (1.0 vs 0.03).",
+            "Geo distance from home is 2.14\u03c3 above the user's baseline (290.2 vs 73.81).",
+            "Device trust 38 is below the policy requirement of 45."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lateral_movement",
+      "name": "Lateral Movement",
+      "technique": "T1021 \u00b7 Remote Services",
+      "severity": "high",
+      "ground_truth": "attack (1)",
+      "subject": "dev",
+      "device": "ROHAN-LT-07",
+      "resource": "finance-db",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 14,
+            "requests_last_5m": 25.0,
+            "failed_attempts_24h": 2.0,
+            "bytes_out_mb": 40.0,
+            "session_minutes": 55.0,
+            "concurrent_sessions": 2.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 89.5,
+          "base_risk": 56.5,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Requests / 5 min is 8.01\u03c3 above the user's baseline (25.0 vs 4.75).",
+            "Failed logins (24 h) is 2.67\u03c3 above the user's baseline (2.0 vs 0.37).",
+            "Least privilege: role 'developer' is not permitted to access database resources under policy 'Baseline verified-device access'."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 14,
+            "requests_last_5m": 19.5,
+            "failed_attempts_24h": 2.0,
+            "bytes_out_mb": 32.1,
+            "session_minutes": 55.0,
+            "concurrent_sessions": 2.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 88.2,
+          "base_risk": 55.2,
+          "anomaly_score": 0.973,
+          "anomaly_flag": true,
+          "isolation_score": 0.973,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Requests / 5 min is 5.83\u03c3 above the user's baseline (19.5 vs 4.75).",
+            "Failed logins (24 h) is 2.67\u03c3 above the user's baseline (2.0 vs 0.37).",
+            "Least privilege: role 'developer' is not permitted to access database resources under policy 'Baseline verified-device access'."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Bengaluru, IN",
+            "hour": 14,
+            "requests_last_5m": 27.1,
+            "failed_attempts_24h": 1.0,
+            "bytes_out_mb": 49.5,
+            "session_minutes": 55.0,
+            "concurrent_sessions": 2.0,
+            "new_device": false,
+            "mfa_verified": true,
+            "threat_intel": "clean"
+          },
+          "risk_score": 89.2,
+          "base_risk": 56.2,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Requests / 5 min is 8.84\u03c3 above the user's baseline (27.1 vs 4.75).",
+            "Egress volume (MB) is 2.49\u03c3 above the user's baseline (49.5 vs 20.86).",
+            "Least privilege: role 'developer' is not permitted to access database resources under policy 'Baseline verified-device access'."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "api_abuse",
+      "name": "API Abuse / Key Misuse",
+      "technique": "T1496 \u00b7 Resource Hijacking",
+      "severity": "high",
+      "ground_truth": "attack (1)",
+      "subject": "dev",
+      "device": "dev-vm-01",
+      "resource": "api-gateway",
+      "hour_fixed_in_scenario": true,
+      "variants": [
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 90.0,
+            "failed_attempts_24h": 3.0,
+            "bytes_out_mb": 200.0,
+            "session_minutes": 30.0,
+            "concurrent_sessions": 6.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 84.7,
+          "base_risk": 64.7,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Requests / 5 min is 33.71\u03c3 above the user's baseline (90.0 vs 4.75).",
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 95.8,
+            "failed_attempts_24h": 3.0,
+            "bytes_out_mb": 235.7,
+            "session_minutes": 30.0,
+            "concurrent_sessions": 6.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 84.7,
+          "base_risk": 64.7,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Requests / 5 min is 36.01\u03c3 above the user's baseline (95.8 vs 4.75).",
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        },
+        {
+          "context": {
+            "geo": "Singapore, SG",
+            "hour": 2,
+            "requests_last_5m": 78.5,
+            "failed_attempts_24h": 3.0,
+            "bytes_out_mb": 180.0,
+            "session_minutes": 30.0,
+            "concurrent_sessions": 6.0,
+            "new_device": false,
+            "mfa_verified": false,
+            "threat_intel": "suspicious"
+          },
+          "risk_score": 84.7,
+          "base_risk": 64.7,
+          "anomaly_score": 1.0,
+          "anomaly_flag": true,
+          "isolation_score": 1.0,
+          "isolation_flag": true,
+          "rule_hits": [],
+          "decision": "BLOCK",
+          "detected": true,
+          "contained": true,
+          "top_reasons": [
+            "Geo distance from home is 30.51\u03c3 above the user's baseline (3163.6 vs 73.81).",
+            "Requests / 5 min is 29.16\u03c3 above the user's baseline (78.5 vs 4.75).",
+            "Policy requires step-up MFA, which has not been completed for this session."
+          ]
+        }
+      ]
+    }
+  ],
+  "normal_false_positives": [
+    {
+      "subject": "developer",
+      "resource": "k8s-prod",
+      "decision": "CHALLENGE",
+      "risk_score": 47.5
+    },
+    {
+      "subject": "security_admin",
+      "resource": "backup-vault",
+      "decision": "CHALLENGE",
+      "risk_score": 42.5
+    },
+    {
+      "subject": "security_admin",
+      "resource": "backup-vault",
+      "decision": "CHALLENGE",
+      "risk_score": 41.4
+    },
+    {
+      "subject": "contractor",
+      "resource": "public-web",
+      "decision": "CHALLENGE",
+      "risk_score": 40.5
+    },
+    {
+      "subject": "analyst",
+      "resource": "k8s-prod",
+      "decision": "RESTRICT",
+      "risk_score": 40.4
+    },
+    {
+      "subject": "contractor",
+      "resource": "hr-portal",
+      "decision": "CHALLENGE",
+      "risk_score": 42.5
+    },
+    {
+      "subject": "analyst",
+      "resource": "k8s-prod",
+      "decision": "RESTRICT",
+      "risk_score": 46.4
+    },
+    {
+      "subject": "analyst",
+      "resource": "k8s-prod",
+      "decision": "RESTRICT",
+      "risk_score": 49.5
+    },
+    {
+      "subject": "security_admin",
+      "resource": "k8s-prod",
+      "decision": "CHALLENGE",
+      "risk_score": 40.4
+    },
+    {
+      "subject": "security_admin",
+      "resource": "finance-db",
+      "decision": "CHALLENGE",
+      "risk_score": 46.1
+    },
+    {
+      "subject": "analyst",
+      "resource": "k8s-prod",
+      "decision": "RESTRICT",
+      "risk_score": 45.0
+    },
+    {
+      "subject": "security_admin",
+      "resource": "ml-training",
+      "decision": "CHALLENGE",
+      "risk_score": 41.5
+    },
+    {
+      "subject": "security_admin",
+      "resource": "backup-vault",
+      "decision": "CHALLENGE",
+      "risk_score": 44.7
+    }
+  ]
+}
