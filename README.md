@@ -339,6 +339,17 @@ pytest -q              # or: python -m pytest -q
 
 `pytest.ini` puts the repository root on the import path, so both commands work from the
 repository root. Tests use a temporary data directory, so they never touch the demo database.
+The final validation run had 439 tests in 23 files, all passing with both commands.
+
+Final validation tools (each uses a new temporary data directory, never `data/`):
+
+```bash
+python scripts/final_audit.py        # 52 feature checks -> docs/evidence/functional_audit.md
+python scripts/final_evaluation.py   # full evaluation -> docs/evidence/final_evaluation.json
+```
+
+`scripts/final_screenshots.py` re-captures the browser evidence; it needs Playwright and
+Microsoft Edge in a separate environment (they are not project dependencies).
 
 ---
 
@@ -360,12 +371,19 @@ app/
   templates/       Jinja2 pages (including api_docs.html for Swagger UI)
   static/          CSS, vanilla JS, the shield icon and vendor/swagger-ui (pinned)
 data/              Runtime database, model, signing key and MFA key (git-ignored)
-docs/              Architecture and evaluation notes
+docs/              Architecture, evaluation, final report, diagrams, demo and viva guides
+docs/evidence/     Screenshots, functional audit and evaluation output of the final run
+scripts/           Final audit, evaluation and screenshot scripts
 tests/             API, engine, session, MFA, docs and hygiene tests
 run.py             Local launcher
 start.bat/start.sh Convenience launchers
 pytest.ini         Test discovery and import path
 constraints.txt    Verified versions of the full dependency tree
+*.pdf, *.docx, Literature_and_survey.md
+                   Project proposal, system design, literature survey, self-assessment
+build_literature_survey_pdf.py, extract_pdf_text.py, insert_extra_sources.py, verify_pdf*.py
+                   Document-building helpers for the survey PDF (need reportlab/pypdf;
+                   not required to run the application)
 ```
 
 ---
@@ -481,6 +499,19 @@ These remain true and are acceptable only for a local research prototype:
 ---
 
 ## Documentation
+
+Final submission documents:
+
+- [`docs/FINAL_PROJECT_REPORT.md`](docs/FINAL_PROJECT_REPORT.md) — complete project report.
+- [`docs/FINAL_EVALUATION.md`](docs/FINAL_EVALUATION.md) — measured detection and performance
+  results, all 12 scenarios, false-positive analysis.
+- [`docs/FINAL_ARCHITECTURE_DIAGRAMS.md`](docs/FINAL_ARCHITECTURE_DIAGRAMS.md) — seven Mermaid
+  diagrams drawn from the code.
+- [`docs/FINAL_DEMO_GUIDE.md`](docs/FINAL_DEMO_GUIDE.md) — setup and a scripted demonstration.
+- [`docs/VIVA_PREPARATION.md`](docs/VIVA_PREPARATION.md) — explanations and likely questions.
+- [`docs/evidence/`](docs/evidence/README.md) — screenshots, functional audit and evaluation output.
+
+Design notes:
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — design, trust boundaries, data model and API.
 - [`docs/EVALUATION.md`](docs/EVALUATION.md) — evaluation methodology, metric definitions and
