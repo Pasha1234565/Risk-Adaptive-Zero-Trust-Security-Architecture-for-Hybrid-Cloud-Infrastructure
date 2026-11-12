@@ -131,3 +131,26 @@ The identical evaluation runs once at first startup and is stored as the baselin
   to stay under the floors.
 
 These limitations are stated in the UI note and are appropriate for a taught research prototype.
+
+## 9. Effect of the Phase 2.2 security changes
+
+Phase 2.2 changed how step-up challenges are stored and answered, how MFA secrets are stored,
+what each role can see and how malformed requests are rejected. It did not change signals,
+weights, thresholds, policies, the anomaly model or the scenario generators.
+
+- **Detection metrics are unchanged.** The default evaluation (140 normal sessions, 12
+  scenarios × 3 variants) run on fresh databases with the code before Phase 2.2 (`87bacf2`) and
+  after it gave identical results: accuracy 0.9261, precision 0.7347, recall 1.0, FPR 0.0929,
+  FNR 0.0, decisions ALLOW 127 / CHALLENGE 15 / RESTRICT 10 / BLOCK 24. Evaluation runs use
+  `persist = False`, so they create no challenge rows.
+- **Simulator traffic is labelled.** Persisted scenario and normal-traffic events, and evaluations
+  an operator runs for another identity, carry `simulated = true` in the event APIs. Their
+  challenges are simulation challenges that never touch a real identity's MFA state, so running
+  the attack lab cannot lock a user out of step-up.
+- **Overhead.** Decrypting a TOTP secret (AES-256-GCM) took 4.9 µs on average over 20,000 runs
+  on the development machine, once per verification. Persisting a challenge adds one `INSERT`
+  to the request that produced the `CHALLENGE`, inside the transaction that already writes the
+  event. The challenge insert was not benchmarked separately.
+- **Several workers.** Because challenge state is now in SQLite, the prototype can be measured
+  with several Uvicorn workers on one host. The latency figures above are still single-process
+  measurements.

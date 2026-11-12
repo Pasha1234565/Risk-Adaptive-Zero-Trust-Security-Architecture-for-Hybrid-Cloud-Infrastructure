@@ -9,6 +9,28 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+def env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable.
+
+    Only an explicit ``1``/``true``/``yes``/``on`` (case-insensitive) enables a
+    flag; any other value counts as false.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    """Read a positive integer environment variable; fall back to ``default``
+    when it is unset or not an integer, and never go below ``minimum``."""
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, value)
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("ZT_DATA_DIR", BASE_DIR / "data"))
 STATIC_DIR = BASE_DIR / "app" / "static"
@@ -17,6 +39,15 @@ TEMPLATES_DIR = BASE_DIR / "app" / "templates"
 DB_PATH = Path(os.environ.get("ZT_DB_PATH", DATA_DIR / "zerotrust.db"))
 MODEL_PATH = Path(os.environ.get("ZT_MODEL_PATH", DATA_DIR / "behaviour_model.joblib"))
 SECRET_PATH = Path(os.environ.get("ZT_SECRET_PATH", DATA_DIR / "signing.key"))
+
+# TOTP seeds are stored encrypted (AES-256-GCM, see app/mfa_crypto.py). The key
+# never goes into the database. It is read from the ZT_MFA_ENCRYPTION_KEY
+# environment variable (base64url, 32 bytes) when set, otherwise from
+# MFA_KEY_PATH, which is generated on first start of a database that holds no
+# encrypted secrets yet. Losing the key makes every enrolled authenticator
+# unusable, so back it up separately from the database.
+MFA_KEY_ENV = "ZT_MFA_ENCRYPTION_KEY"
+MFA_KEY_PATH = Path(os.environ.get("ZT_MFA_KEY_PATH", DATA_DIR / "mfa.key"))
 
 SESSION_COOKIE = "zt_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
@@ -27,8 +58,34 @@ SESSION_SECRET = os.environ.get("ZT_SESSION_SECRET", "")
 PBKDF2_ITERATIONS = int(os.environ.get("ZT_PBKDF2_ITERATIONS", "120000"))
 PBKDF2_ALGORITHM = "sha256"
 
+# Local demonstration helper (GET /api/auth/totp) that reveals the current TOTP
+# step-up code to the signed-in user, because the demo identities have no
+# enrolled phone. Disabled unless ZT_ENABLE_DEMO_TOTP is explicitly true, and
+# even then served only to direct loopback clients. Never enable it in a real
+# deployment: it lets anyone holding a password also pass step-up MFA.
+DEMO_TOTP_ENABLED = env_flag("ZT_ENABLE_DEMO_TOTP", default=False)
+
 MAX_LOGIN_FAILURES = 5
 LOGIN_LOCK_SECONDS = 300
+
+# Step-up MFA challenges (POST /api/access/challenge).
+# - A challenge expires CHALLENGE_TTL_SECONDS after it is issued.
+# - It is cancelled after MFA_MAX_ATTEMPTS_PER_CHALLENGE incorrect codes.
+# - Across all of an identity's challenges, MFA_USER_MAX_FAILURES incorrect
+#   codes within MFA_USER_FAILURE_WINDOW_SECONDS pause verification for that
+#   identity until the oldest failure leaves the window, so issuing new
+#   challenges does not reset the guess budget. Nothing locks permanently, and
+#   a successful verification starts a fresh window.
+# Roles allowed to evaluate access on behalf of ANOTHER identity in the access
+# console and to run attack simulations / evaluations. Every other signed-in
+# user can evaluate only their own identity with their own devices. The actor
+# (signed-in user) is recorded separately from the evaluated subject.
+SIMULATION_ROLES = frozenset({"security_admin", "analyst"})
+
+CHALLENGE_TTL_SECONDS = 180
+MFA_MAX_ATTEMPTS_PER_CHALLENGE = env_int("ZT_MFA_MAX_ATTEMPTS", 3)
+MFA_USER_MAX_FAILURES = env_int("ZT_MFA_USER_MAX_FAILURES", 6)
+MFA_USER_FAILURE_WINDOW_SECONDS = env_int("ZT_MFA_USER_WINDOW_SECONDS", 900)
 
 # Default risk engine configuration. Stored in the settings table so it can be
 # tuned from the admin console without a code change.

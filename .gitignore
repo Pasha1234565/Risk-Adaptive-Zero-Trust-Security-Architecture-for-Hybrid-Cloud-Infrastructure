@@ -2,6 +2,13 @@
 data/
 .secret_key
 
+# Local environment files (may hold ZT_SESSION_SECRET or other secrets).
+# A committed template, if one is added, must be named .env.example.
+.env
+.env.*
+*.env
+!.env.example
+
 # Python
 __pycache__/
 *.py[cod]

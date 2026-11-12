@@ -11,11 +11,19 @@
 
   function populateUsers() {
     const select = document.getElementById("user-select");
-    select.innerHTML = state.inventory.users.map(function (user) {
+    // Only simulation roles may evaluate other identities; the server enforces
+    // this, and the selector simply mirrors it.
+    const canSimulate = document.body.dataset.canSimulate === "yes";
+    const selfId = Number(document.body.dataset.userId);
+    const users = canSimulate
+      ? state.inventory.users
+      : state.inventory.users.filter(function (user) { return user.id === selfId; });
+    select.innerHTML = users.map(function (user) {
       return option(user.id, user.name + " · " + user.role.replace(/_/g, " "));
     }).join("");
-    const analyst = state.inventory.users.find(function (user) { return user.role === "analyst"; });
-    select.value = String((analyst || state.inventory.users[0]).id);
+    const analyst = users.find(function (user) { return user.role === "analyst"; });
+    select.value = String((analyst || users[0]).id);
+    select.disabled = !canSimulate;
     select.addEventListener("change", function () {
       populateDevices();
       updateHints();
@@ -165,7 +173,9 @@
               window.ZT.decisionBadge(result.decision) +
               '<span class="chip">Event #' + window.ZT.escape(result.event_id || "—") + "</span>" +
               '<span class="chip">' + window.ZT.escape(window.ZT.fmtTime(result.ts)) + "</span>" +
-              (result.step_up ? '<span class="chip">Step-up verified</span>' : "") +
+              (result.step_up
+                ? '<span class="chip">' + (result.step_up_mode === "simulation" ? "Step-up simulated" : "Step-up verified") + "</span>"
+                : "") +
             "</div>" +
           "</div>" +
           '<div class="gauge-wrap" id="risk-gauge"></div>' +
@@ -220,8 +230,32 @@
     if (previewBtn) previewBtn.addEventListener("click", function () { preview(result); });
   }
 
+  // Server-rendered flag: "on" only when ZT_ENABLE_DEMO_TOTP is set and this
+  // page was requested from a loopback client.
+  function demoTotpAvailable() {
+    return document.body.dataset.demoTotp === "on";
+  }
+
+  function simulationChallengeHtml(result) {
+    return (
+      '<div class="challenge-box" id="simulation-challenge">' +
+        "<h3>Simulated step-up authentication</h3>" +
+        "<p>This request was evaluated for " + window.ZT.escape(result.user ? result.user.name : "another identity") +
+          " as a simulation. No authenticator code is checked and the identity's real MFA state is not " +
+          "touched: record the outcome you want to simulate. It is logged against your account.</p>" +
+        '<div class="challenge-form">' +
+          '<button class="btn btn-primary small" id="simulate-success">Simulate MFA success</button>' +
+          '<button class="btn btn-ghost small" id="simulate-failure">Simulate MFA failure</button>' +
+          '<span class="challenge-hint" id="challenge-hint">Simulated outcomes are recorded as simulations in the event log.</span>' +
+        "</div>" +
+      "</div>"
+    );
+  }
+
   function challengeHtml(result) {
+    if (result.challenge && result.challenge.mode === "simulation") return simulationChallengeHtml(result);
     const enrolled = result.user && result.user.mfa_enabled;
+    const demo = demoTotpAvailable();
     return (
       '<div class="challenge-box">' +
         "<h3>Step-up authentication required</h3>" +
@@ -232,15 +266,49 @@
           ? '<div class="challenge-form">' +
               '<input id="mfa-code" inputmode="numeric" maxlength="6" placeholder="000000" aria-label="Verification code">' +
               '<button class="btn btn-primary small" id="verify-mfa">Verify &amp; re-evaluate</button>' +
-              '<button class="btn btn-ghost small" id="demo-code">Get demo code</button>' +
-              '<span class="challenge-hint" id="challenge-hint">Local prototype: codes are generated from the enrolled TOTP secret.</span>' +
+              (demo ? '<button class="btn btn-ghost small" id="demo-code">Get demo code</button>' : "") +
+              '<span class="challenge-hint" id="challenge-hint">' + (demo
+                ? "Demo MFA helper enabled (ZT_ENABLE_DEMO_TOTP, local only): it reveals the code the enrolled authenticator would show."
+                : "Enter the code from the identity's enrolled authenticator app.") + "</span>" +
             "</div>"
           : "") +
       "</div>"
     );
   }
 
+  function bindSimulation() {
+    const buttons = [document.getElementById("simulate-success"), document.getElementById("simulate-failure")];
+    buttons.forEach(function (button) {
+      if (!button) return;
+      button.addEventListener("click", async function () {
+        const outcome = button.id === "simulate-success" ? "success" : "failure";
+        window.ZT.setLoading(button, true, "Recording…");
+        try {
+          const updated = await window.ZT.api("/api/access/challenge", {
+            method: "POST",
+            body: { challenge_id: state.challengeId, simulated_outcome: outcome },
+          });
+          window.ZT.toast("Simulated MFA success recorded. Request re-evaluated.", "ok");
+          renderResult(updated);
+          refreshRecent();
+          window.ZT.refreshAlertBadge();
+        } catch (err) {
+          window.ZT.toast(err.message, err.status === 400 ? "warn" : "error");
+          window.ZT.setLoading(button, false);
+          document.getElementById("challenge-hint").textContent = err.message;
+          if (err.status === 429) {
+            buttons.forEach(function (item) { if (item) item.disabled = true; });
+          }
+        }
+      });
+    });
+  }
+
   function bindChallenge(result) {
+    if (result.challenge && result.challenge.mode === "simulation") {
+      bindSimulation();
+      return;
+    }
     const verify = document.getElementById("verify-mfa");
     const demo = document.getElementById("demo-code");
     if (!verify) return;
@@ -263,13 +331,29 @@
       } catch (err) {
         window.ZT.toast(err.message, "error");
         window.ZT.setLoading(verify, false);
+        if (err.status === 429) {
+          // Attempt limit reached: this challenge cannot be completed any more.
+          verify.disabled = true;
+          document.getElementById("mfa-code").disabled = true;
+          if (demo) demo.disabled = true;
+          document.getElementById("challenge-hint").textContent = err.message;
+        }
       }
     });
+    if (!demo) return;
     demo.addEventListener("click", async function () {
       try {
         const data = await window.ZT.api("/api/auth/totp");
+        const hint = document.getElementById("challenge-hint");
+        if (data.already_used) {
+          // Each code is accepted once; submitting it again would count as a failed attempt.
+          document.getElementById("mfa-code").value = "";
+          hint.textContent = "The current code was already used. Request a new one in " +
+            data.seconds_remaining + "s.";
+          return;
+        }
         document.getElementById("mfa-code").value = data.code;
-        document.getElementById("challenge-hint").textContent =
+        hint.textContent =
           "Demo code " + data.code + " · valid for " + data.seconds_remaining + "s. In production it stays on the enrolled device.";
       } catch (err) {
         window.ZT.toast(err.message, "error");

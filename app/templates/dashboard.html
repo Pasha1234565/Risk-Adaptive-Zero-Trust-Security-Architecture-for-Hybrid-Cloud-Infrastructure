@@ -7,6 +7,9 @@
     <p class="eyebrow">Security operations · last 24 hours</p>
     <h1>Trust overview</h1>
     <p class="lede">Every access request across the private data centre and public cloud is evaluated continuously. No network location is implicitly trusted.</p>
+    {% if not can_simulate %}
+    <p class="lede" id="scope-note">Figures cover your own identity's access decisions only. Security operations roles see the whole estate.</p>
+    {% endif %}
   </div>
   <div class="head-actions">
     <span class="updated" id="updated-at">Loading telemetry…</span>

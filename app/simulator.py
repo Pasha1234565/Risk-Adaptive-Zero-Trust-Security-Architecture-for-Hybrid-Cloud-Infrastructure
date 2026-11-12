@@ -325,6 +325,8 @@ def run_scenario(
     *,
     variants: int = 3,
     persist: bool = True,
+    actor_id: int | None = None,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     scenario = SCENARIO_MAP.get(scenario_id)
     if not scenario:
@@ -355,6 +357,8 @@ def run_scenario(
             persist=persist,
             ground_truth=1,
             scenario=scenario_id,
+            actor_id=actor_id,
+            session_id=session_id,
         )
         result["scenario_name"] = scenario["name"]
         result["technique"] = scenario["technique"]
@@ -434,6 +438,8 @@ def run_normal(
     persist: bool = True,
     seed: int | None = None,
     spread_hours: float = 0.0,
+    actor_id: int | None = None,
+    session_id: str | None = None,
 ) -> list[dict[str, Any]]:
     users, resources, devices = _inventory()
     interactive = [u for u in users.values() if u["role"] != "service"]
@@ -461,6 +467,8 @@ def run_normal(
             ground_truth=0,
             scenario="normal",
             timestamp=timestamp,
+            actor_id=actor_id,
+            session_id=session_id,
         )
         results.append(result)
     return results
@@ -470,7 +478,8 @@ def bootstrap_history() -> int:
     """Populate a believable baseline of normal activity on first run."""
     with database.get_db() as conn:
         count = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
-    if count:
+    # The claim makes exactly one of several workers starting together run it.
+    if count or not database.claim_once("bootstrap_history_claimed_at"):
         return 0
     results = run_normal(80, persist=True, spread_hours=24, seed=11)
     return len(results)

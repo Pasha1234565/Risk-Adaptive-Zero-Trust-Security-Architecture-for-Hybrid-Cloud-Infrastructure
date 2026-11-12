@@ -3,11 +3,13 @@ from __future__ import annotations
 import pytest
 
 from app import database, risk, security
+from conftest import decrypted
 
 
 def _target(email: str, device_name: str, resource_name: str):
     with database.get_db() as conn:
-        user = database.row(conn, "SELECT * FROM users WHERE email = ?", (email,))
+        # mfa_secret is stored encrypted; decrypt it as an authenticator would hold it.
+        user = decrypted(database.row(conn, "SELECT * FROM users WHERE email = ?", (email,)))
         device = database.row(conn, "SELECT * FROM devices WHERE user_id = ? AND name = ?", (user["id"], device_name))
         resource = database.row(conn, "SELECT * FROM resources WHERE name = ?", (resource_name,))
     assert user and device and resource

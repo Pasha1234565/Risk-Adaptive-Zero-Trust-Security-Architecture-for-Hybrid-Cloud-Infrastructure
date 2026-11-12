@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
 from . import config
@@ -86,7 +87,10 @@ CREATE TABLE IF NOT EXISTS events (
     latency_ms     REAL NOT NULL DEFAULT 0,
     ground_truth   INTEGER NOT NULL DEFAULT 0,
     scenario       TEXT NOT NULL DEFAULT 'live',
-    outcome        TEXT NOT NULL DEFAULT 'evaluated'
+    outcome        TEXT NOT NULL DEFAULT 'evaluated',
+    -- Signed-in user who initiated the evaluation (NULL for system-generated
+    -- traffic and for events recorded before this column existed).
+    actor_user_id  INTEGER REFERENCES users(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts DESC);
@@ -124,6 +128,65 @@ CREATE TABLE IF NOT EXISTS login_attempts (
     success INTEGER NOT NULL,
     source_ip TEXT NOT NULL DEFAULT ''
 );
+
+-- Server-side session revocation, keyed by the token's jti claim. A row only
+-- needs to live until the token itself expires (expires_at, Unix seconds).
+CREATE TABLE IF NOT EXISTS revoked_sessions (
+    jti        TEXT PRIMARY KEY,
+    user_id    INTEGER,
+    revoked_at TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_sessions_expires ON revoked_sessions(expires_at);
+
+-- TOTP replay protection: the last accepted 30-second time step per user. Only
+-- the counter is stored, never a code.
+CREATE TABLE IF NOT EXISTS totp_counters (
+    user_id      INTEGER PRIMARY KEY REFERENCES users(id),
+    last_counter INTEGER NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+-- Step-up MFA verification outcomes per identity, used for throttling and
+-- audit. user_id is the identity whose code was checked; actor_user_id is the
+-- signed-in user who submitted it (when known). Codes are never stored.
+-- mode 'simulation' rows record an operator's simulated outcome; they are kept
+-- for audit and never count towards the identity's throttle.
+CREATE TABLE IF NOT EXISTS mfa_attempts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    actor_user_id INTEGER REFERENCES users(id),
+    ts            TEXT NOT NULL,
+    success       INTEGER NOT NULL,
+    mode          TEXT NOT NULL DEFAULT 'live'
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_attempts_user_ts ON mfa_attempts(user_id, ts);
+
+-- Step-up MFA challenges. Shared by every worker process through this file.
+-- Only a SHA-256 hash of the challenge id is stored (the id itself is a bearer
+-- secret held by the browser), and only a hash of the session id. Rows bind the
+-- challenge to the evaluated request (event, subject, device, resource) and to
+-- the actor and session that may answer it. Times are Unix seconds.
+CREATE TABLE IF NOT EXISTS mfa_challenges (
+    token_hash      TEXT PRIMARY KEY,
+    event_id        INTEGER NOT NULL REFERENCES events(id),
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    device_id       INTEGER NOT NULL REFERENCES devices(id),
+    resource_id     INTEGER NOT NULL REFERENCES resources(id),
+    actor_user_id   INTEGER REFERENCES users(id),
+    session_hash    TEXT,
+    mode            TEXT NOT NULL DEFAULT 'live' CHECK (mode IN ('live', 'simulation')),
+    created_at      REAL NOT NULL,
+    expires_at      REAL NOT NULL,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'consumed', 'cancelled', 'expired', 'invalidated')),
+    consumed_at     REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_expires ON mfa_challenges(expires_at);
 """
 
 
@@ -131,10 +194,59 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def init_db() -> None:
+# Additive column migrations for databases created before a column existed.
+# Each entry is applied only when the column is missing; existing rows keep
+# their data and get NULL in the new column.
+COLUMN_MIGRATIONS = [
+    ("events", "actor_user_id", "INTEGER REFERENCES users(id)"),
+    ("mfa_attempts", "mode", "TEXT NOT NULL DEFAULT 'live'"),
+]
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> list[str]:
+    applied = []
+    for table, column, ddl in COLUMN_MIGRATIONS:
+        present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in present:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+            applied.append(f"{table}.{column}")
+    return applied
+
+
+def init_db() -> list[str]:
+    """Create missing tables and apply additive migrations; returns the
+    migrations applied (empty when the schema was already current)."""
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
     with get_db() as conn:
         conn.executescript(SCHEMA)
+        return _migrate_columns(conn)
+
+
+WAL_RETRY_SECONDS = 15.0
+
+
+def _enable_wal(conn: sqlite3.Connection) -> None:
+    """Switch the database to WAL mode, tolerating concurrent start-up.
+
+    WAL is a persistent property of the database file, so this is a no-op once
+    any connection has set it. While several worker processes open a brand-new
+    file at the same moment, SQLite can answer the mode change with "database
+    is locked" immediately, without waiting for the busy timeout, so the
+    switch is retried with a short back-off instead of failing start-up.
+    """
+    deadline = time.monotonic() + WAL_RETRY_SECONDS
+    delay = 0.02
+    while True:
+        try:
+            if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            message = str(exc).lower()
+            if ("locked" not in message and "busy" not in message) or time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
 
 
 @contextmanager
@@ -142,7 +254,11 @@ def get_db() -> Iterator[sqlite3.Connection]:
     config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        _enable_wal(conn)
+    except Exception:
+        conn.close()
+        raise
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
@@ -197,6 +313,114 @@ def engine_config() -> dict:
     # Keep the weighted score on a 0-100 scale.
     clean_weights = {k: round(v * 100.0 / total, 2) for k, v in clean_weights.items()}
     return {"thresholds": clean_thresholds, "weights": clean_weights}
+
+
+def revoke_session(jti: str, user_id: int | None, expires_at: int) -> None:
+    """Record a session id as revoked until its token expiry (idempotent)."""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO revoked_sessions (jti, user_id, revoked_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (jti, user_id, utcnow(), int(expires_at)),
+        )
+
+
+def is_session_revoked(jti: str) -> bool:
+    with get_db() as conn:
+        found = conn.execute(
+            "SELECT 1 FROM revoked_sessions WHERE jti = ?", (jti,)
+        ).fetchone()
+    return found is not None
+
+
+def purge_expired_revocations(now: int | None = None) -> int:
+    """Delete revocation rows whose tokens have expired; return rows removed.
+
+    Safe because an expired token is already rejected by its ``exp`` claim, so
+    the revocation record no longer protects anything.
+    """
+    cutoff = int(time.time()) if now is None else int(now)
+    with get_db() as conn:
+        cursor = conn.execute("DELETE FROM revoked_sessions WHERE expires_at < ?", (cutoff,))
+    return int(cursor.rowcount)
+
+
+@contextmanager
+def _using(conn: sqlite3.Connection | None) -> Iterator[sqlite3.Connection]:
+    """Use the caller's connection (and transaction) when given, else a new one."""
+    if conn is not None:
+        yield conn
+        return
+    with get_db() as own:
+        yield own
+
+
+def claim_once(key: str) -> bool:
+    """Atomically claim a one-time start-up task; True only for the first
+    caller across all processes sharing the database."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (key, json.dumps(utcnow()))
+        )
+        return cursor.rowcount == 1
+
+
+def advance_totp_counter(user_id: int, counter: int, conn: sqlite3.Connection | None = None) -> bool:
+    """Record ``counter`` as the user's last accepted TOTP step if it is newer.
+
+    A single UPSERT with a conditional update runs under SQLite's write lock,
+    so concurrent requests presenting the same code cannot both succeed.
+    Returns True when the counter was accepted.
+    """
+    with _using(conn) as conn:
+        cursor = conn.execute(
+            """INSERT INTO totp_counters (user_id, last_counter, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE
+                   SET last_counter = excluded.last_counter, updated_at = excluded.updated_at
+                   WHERE excluded.last_counter > totp_counters.last_counter""",
+            (int(user_id), int(counter), utcnow()),
+        )
+        return cursor.rowcount == 1
+
+
+def record_mfa_attempt(user_id: int, success: bool, actor_user_id: int | None = None,
+                       conn: sqlite3.Connection | None = None, *, mode: str = "live") -> None:
+    with _using(conn) as conn:
+        conn.execute(
+            "INSERT INTO mfa_attempts (user_id, actor_user_id, ts, success, mode) VALUES (?, ?, ?, ?, ?)",
+            (int(user_id), actor_user_id, utcnow(), 1 if success else 0, mode),
+        )
+
+
+def recent_mfa_failures(user_id: int, window_seconds: int,
+                        conn: sqlite3.Connection | None = None) -> tuple[int, str | None]:
+    """Failed verifications for ``user_id`` inside the window, counted only
+    since the identity's last successful verification. Only real ('live')
+    verifications count: simulated outcomes never throttle or reset anyone.
+
+    Returns ``(count, oldest_counted_failure_ts)``.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=window_seconds)).isoformat(timespec="seconds")
+    with _using(conn) as conn:
+        last_success = conn.execute(
+            "SELECT MAX(ts) AS ts FROM mfa_attempts WHERE user_id = ? AND success = 1 AND mode = 'live'",
+            (int(user_id),),
+        ).fetchone()["ts"]
+        since = max(cutoff, last_success) if last_success else cutoff
+        found = conn.execute(
+            "SELECT COUNT(*) AS n, MIN(ts) AS oldest FROM mfa_attempts "
+            "WHERE user_id = ? AND success = 0 AND mode = 'live' AND ts > ?",
+            (int(user_id), since),
+        ).fetchone()
+    return int(found["n"]), found["oldest"]
+
+
+def last_totp_counter(user_id: int) -> int | None:
+    with get_db() as conn:
+        found = conn.execute(
+            "SELECT last_counter FROM totp_counters WHERE user_id = ?", (int(user_id),)
+        ).fetchone()
+    return int(found["last_counter"]) if found else None
 
 
 def is_empty() -> bool:

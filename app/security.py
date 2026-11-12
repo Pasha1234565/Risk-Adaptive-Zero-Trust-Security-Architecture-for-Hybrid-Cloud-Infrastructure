@@ -18,7 +18,7 @@ import struct
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import config
+from . import config, database, keystore
 
 # ---------------------------------------------------------------------------
 # Password hashing
@@ -74,14 +74,9 @@ def _secret() -> bytes:
     key_file = config.SECRET_PATH
     if key_file.exists():
         return key_file.read_bytes()
-    key_file.parent.mkdir(parents=True, exist_ok=True)
-    key = secrets.token_bytes(48)
-    key_file.write_bytes(key)
-    try:
-        key_file.chmod(0o600)
-    except OSError:
-        pass
-    return key
+    # Several workers may start at once: publish atomically so all of them
+    # sign with the same key (keystore returns whichever key won).
+    return keystore.create_once(key_file, secrets.token_bytes(48))
 
 
 def issue_token(user_id: int, *, ttl_seconds: int | None = None) -> str:
@@ -103,6 +98,11 @@ def issue_token(user_id: int, *, ttl_seconds: int | None = None) -> str:
 
 
 def decode_token(token: str) -> dict | None:
+    """Verify signature and expiry; return the claims or None.
+
+    This is a stateless check. Use :func:`verify_session_token` for requests so
+    that revoked (logged-out) sessions are rejected as well.
+    """
     try:
         header_b64, payload_b64, signature_b64 = token.split(".")
         signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
@@ -110,11 +110,43 @@ def decode_token(token: str) -> dict | None:
         if not hmac.compare_digest(expected, _b64url_decode(signature_b64)):
             return None
         payload = json.loads(_b64url_decode(payload_b64))
-    except (ValueError, json.JSONDecodeError, TypeError):
+        if not isinstance(payload, dict):
+            return None
+        expires_at = int(payload.get("exp", 0))
+    except (ValueError, json.JSONDecodeError, TypeError, AttributeError):
         return None
-    if int(payload.get("exp", 0)) < int(time.time()):
+    if expires_at < int(time.time()):
+        return None
+    # The jti is the server-side session id used for revocation.
+    if not isinstance(payload.get("jti"), str) or not payload["jti"]:
         return None
     return payload
+
+
+def verify_session_token(token: str) -> dict | None:
+    """Return the claims of a valid, unexpired and non-revoked session token."""
+    payload = decode_token(token)
+    if payload is None or database.is_session_revoked(payload["jti"]):
+        return None
+    return payload
+
+
+def revoke_session_token(token: str) -> bool:
+    """Revoke the session behind ``token`` until it would have expired.
+
+    Returns False when the token is not a valid session token (nothing to
+    revoke). Expired revocation rows are purged opportunistically.
+    """
+    payload = decode_token(token)
+    if payload is None:
+        return False
+    try:
+        user_id: int | None = int(payload.get("sub"))
+    except (TypeError, ValueError):
+        user_id = None
+    database.revoke_session(payload["jti"], user_id, int(payload["exp"]))
+    database.purge_expired_revocations()
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -143,15 +175,42 @@ def totp_seconds_remaining(at: int | None = None) -> int:
     return 30 - int((at or time.time()) % 30)
 
 
-def verify_totp(secret: str, code: str, *, window: int = 1) -> bool:
+def current_totp_counter(at: float | None = None) -> int:
+    """RFC 6238 time-step counter (30-second steps) for ``at`` or now."""
+    return int(time.time() if at is None else at) // 30
+
+
+def matching_totp_counters(secret: str, code: str, *, window: int = 1) -> list[int]:
+    """Time-step counters within ``window`` steps of now whose code equals ``code``."""
     code = (code or "").strip().replace(" ", "")
     if not code.isdigit() or len(code) != 6 or not secret:
-        return False
-    counter = int(time.time()) // 30
-    return any(
-        hmac.compare_digest(_hotp(secret, counter + offset), code)
+        return []
+    counter = current_totp_counter()
+    return [
+        counter + offset
         for offset in range(-window, window + 1)
-    )
+        if hmac.compare_digest(_hotp(secret, counter + offset), code)
+    ]
+
+
+def verify_totp(secret: str, code: str, *, window: int = 1) -> bool:
+    """Stateless code check. Step-up MFA must use :func:`consume_totp`, which
+    also refuses a time step that was already accepted for the user."""
+    return bool(matching_totp_counters(secret, code, window=window))
+
+
+def consume_totp(user_id: int, secret: str, code: str, *, window: int = 1, conn=None) -> bool:
+    """Verify ``code`` and atomically mark its time step as used for ``user_id``.
+
+    Returns True only if the matched step is newer than every step previously
+    accepted for this user, so the same code (or an older one still inside the
+    tolerance window) cannot be replayed. Invalid codes never change stored
+    state, and no code is ever stored, only the step counter.
+    """
+    counters = matching_totp_counters(secret, code, window=window)
+    if not counters:
+        return False
+    return database.advance_totp_counter(user_id, max(counters), conn=conn)
 
 
 # ---------------------------------------------------------------------------

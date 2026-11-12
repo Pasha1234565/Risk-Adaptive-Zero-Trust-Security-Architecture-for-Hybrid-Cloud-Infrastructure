@@ -8,7 +8,9 @@ lake, ML training, backup vault).
 
 from __future__ import annotations
 
-from . import config, database, security
+import json
+
+from . import config, database, mfa_crypto, security
 
 DEMO_USERS = [
     {
@@ -205,31 +207,49 @@ DEMO_POLICIES = [
 
 
 def seed_identity() -> None:
-    """Create the demo inventory and default engine configuration."""
+    """Create the demo inventory and default engine configuration.
+
+    Also provisions the MFA encryption key and encrypts any plaintext TOTP
+    secrets left by an older version (see app/mfa_crypto.py).
+    """
     database.init_db()
+    with database.get_db() as conn:
+        mfa_crypto.prepare(conn)
     if not database.is_empty():
         return
 
     now = database.utcnow()
+    key = mfa_crypto.active_key()
+    password_hashes = {user["email"]: security.hash_password(user["password"]) for user in DEMO_USERS}
     with database.get_db() as conn:
+        # Several workers can start on a fresh database at the same time. The
+        # write lock plus a re-check inside it means exactly one of them seeds.
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+            return
         for user in DEMO_USERS:
-            conn.execute(
+            cursor = conn.execute(
                 """INSERT INTO users
                    (email, name, role, department, password_hash, mfa_enabled,
                     mfa_secret, status, is_admin, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?)""",
                 (
                     user["email"],
                     user["name"],
                     user["role"],
                     user["department"],
-                    security.hash_password(user["password"]),
+                    password_hashes[user["email"]],
                     user["mfa_enabled"],
-                    security.generate_totp_secret(),
                     user["status"],
                     user["is_admin"],
                     now,
                 ),
+            )
+            # The ciphertext is bound to the row id, which is known only now.
+            user_id = int(cursor.lastrowid)
+            conn.execute(
+                "UPDATE users SET mfa_secret = ? WHERE id = ?",
+                (mfa_crypto.encrypt_secret(security.generate_totp_secret(), user_id, key), user_id),
             )
 
         user_ids = {
@@ -271,7 +291,14 @@ def seed_identity() -> None:
                 ),
             )
 
-    database.set_setting("thresholds", config.DEFAULT_THRESHOLDS)
-    database.set_setting("weights", config.DEFAULT_WEIGHTS)
-    database.set_setting("policy_version", 1)
-    database.set_setting("demo_seeded_at", now)
+        for name, value in (
+            ("thresholds", config.DEFAULT_THRESHOLDS),
+            ("weights", config.DEFAULT_WEIGHTS),
+            ("policy_version", 1),
+            ("demo_seeded_at", now),
+        ):
+            conn.execute(
+                "INSERT INTO settings(key, value) VALUES(?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (name, json.dumps(value)),
+            )
